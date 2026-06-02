@@ -1,4 +1,4 @@
-module github.com/GoodyOG/SSHCustom_Magisk
+module github.com/goodyrussia/SSHCustom
 
 go 1.23
 
