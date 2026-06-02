@@ -1,4 +1,4 @@
-// sshcustomd v5.0.0 - TPROXY only
+// sshcustomd v5.0.0 - TPROXY only SSH VPN
 package main
 
 import (
@@ -18,6 +18,7 @@ import (
 
 	"sshcustomd/internal/config"
 	"sshcustomd/internal/proxy"
+	"sshcustomd/internal/ssh"
 )
 
 var version = "5.0.0"
@@ -91,15 +92,24 @@ func tunnelLoop(atomicCfg *config.AtomicConfig, workDir string) {
 			time.Sleep(5 * time.Second)
 			continue
 		}
-		log.Printf("[tunnel] connecting %s", cfg.SSHHost)
+
+		log.Printf("[tunnel] connecting to %s with payload", cfg.SSHHost)
+
+		client, err := ssh.Connect(cfg)
+		if err != nil {
+			log.Printf("[tunnel] connect failed: %v", err)
+			time.Sleep(10 * time.Second)
+			continue
+		}
 
 		cancel := startListeners(cfg)
 		runScript(iptables, "enable")
 
-		time.Sleep(30 * time.Second)
+		<-client.Done()
 
 		cancel()
 		runScript(iptables, "disable")
+		client.Close()
 	}
 }
 
@@ -116,5 +126,5 @@ func runScript(script, action string) {
 }
 
 func startUnixAPI(workDir string) {
-	log.Println("[unix] socket ready at", workDir+"/run/sshcustomd.sock")
+	log.Println("[unix] socket ready")
 }
