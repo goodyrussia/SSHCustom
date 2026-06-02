@@ -38,3 +38,7 @@ module/vpnchain/configs/*.ovpn
 *.swo
 *~
 .kiro/skills/
+
+# v5.0.0 build artifacts
+dist/
+*.bak
