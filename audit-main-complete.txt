@@ -1,0 +1,1939 @@
+================================================================================
+SSHCustom-VPNChain MAIN BRANCH — COMPLETE LINE-BY-LINE AUDIT
+================================================================================
+Scope: Every source file, resource, script, config, and build file.
+For each line: what it does, bugs found, vpnchain references needing removal.
+================================================================================
+
+================================================================================
+FILE: app/src/main/java/com/sshcustom/vpnchain/MainActivity.kt
+================================================================================
+L1   package com.sshcustom.vpnchain
+     -> Package declaration. VPNCHAIN REFERENCE: package path contains "vpnchain".
+
+L2   import android.os.Bundle
+     -> Standard Android bundle import.
+
+L3   import androidx.activity.ComponentActivity
+     -> Jetpack Compose activity base.
+
+L4   import androidx.activity.compose.setContent
+     -> Compose content setter.
+
+L5   import androidx.activity.enableEdgeToEdge
+     -> Enables edge-to-edge display.
+
+L6-9 Compose/UI imports for runtime, graphics, vector paths, dimensions.
+
+L10  import androidx.lifecycle.viewmodel.compose.viewModel
+     -> Compose ViewModel integration.
+
+L11  import com.sshcustom.vpnchain.ui.screens.*
+     -> Wildcard import of all screen composables.
+
+L12  import com.sshcustom.vpnchain.ui.theme.SSHCustomTheme
+     -> App theme.
+
+L13-17 Miuix UI library imports (NavigationBar, NavigationItem, Scaffold, icons).
+
+L19  class MainActivity : ComponentActivity() {
+     -> Main entry activity.
+
+L20-23 onCreate: calls super, enableEdgeToEdge, sets Compose content with SSHCustomTheme.
+
+L27-44 ShieldIcon lazy ImageVector definition.
+     -> Custom shield vector icon for VPN Chain tab.
+     -> BUG: The pathData draws a shield shape. No functional bug.
+     -> VPNCHAIN REFERENCE: Icon name "shield" and usage in VPN Chain tab.
+
+L46  @Composable fun MainAppContent() {
+     -> Root composable.
+
+L47  val vm: MainViewModel = viewModel()
+     -> Obtains ViewModel instance.
+
+L48-60 Collects multiple StateFlow values via collectAsState:
+     status, tunnelState, netSpeed, wanIp, logText, activeLog, profiles,
+     activeProfileId, settings, hasRoot, isLoading, pendingAction.
+
+L62-66 VPN Chain state collections:
+     vpnConfigs, selectedVpnCfg, vpnChainState, chainExitIp, vpnBusy.
+     -> VPNCHAIN REFERENCE: All variables prefixed with "vpn" or "chain".
+
+L68-69 Latency state collections.
+
+L71  var selectedTab by remember { mutableIntStateOf(0) }
+     -> Bottom nav tab index, default Home (0).
+
+L73-78 navItems list definition.
+     -> Label "VPN Chain" at index 2 with ShieldIcon.
+     -> VPNCHAIN REFERENCE: "VPN Chain" label and ShieldIcon.
+
+L80-88 Scaffold with bottom NavigationBar.
+
+L90-102 HomeScreen call with all parameters.
+
+L103-109 ProfilesScreen call.
+
+L110-121 VpnChainScreen call.
+     -> VPNCHAIN REFERENCE: Entire screen is VPN Chain feature.
+     -> Parameters: sshConnected, configs, selectedConfig, state, exitIp, busy,
+        onSelectConfig, onRefreshConfigs, onConnect, onDisconnect.
+
+L122-127 LogsScreen call.
+
+L128-134 SettingsScreen call.
+
+================================================================================
+FILE: app/src/main/java/com/sshcustom/vpnchain/MainViewModel.kt
+================================================================================
+L1   package com.sshcustom.vpnchain
+     -> VPNCHAIN REFERENCE: package path.
+
+L2-12 Imports: Application, ComponentName, Intent, ServiceConnection, IBinder,
+     AndroidViewModel, viewModelScope, DaemonRepository, domain models,
+     SSHControlService, Shell, RootService, coroutines/flow.
+
+L14  class MainViewModel(app: Application) : AndroidViewModel(app) {
+
+L16  private val repo = DaemonRepository(app)
+
+L18-19 _hasRoot MutableStateFlow and hasRoot StateFlow.
+
+L21-35 RootService binding with serviceConn object.
+     -> BUG: No explicit unbind in onCleared for the initial bind if
+        bindRootService() fails silently — but onCleared handles it.
+
+L37-48 status StateFlow with repo.statusFlow(), onEach saveLastState,
+     stateIn with SharingStarted.Eagerly.
+     -> BUG: lastPersistedConnected is a var, not atomic — race condition
+        possible if multiple collectors emit simultaneously, though unlikely
+        given single upstream flow.
+
+L50-65 tunnelState derived from status + _tunnelStateOverride.
+     -> Logic: override takes precedence, then status.connected, then error, stopped.
+
+L67-68 _pendingAction MutableStateFlow.
+
+L70-71 _isLoading MutableStateFlow.
+
+L73-75 netSpeed derived from status upKbps/downKbps.
+
+L77-78 wanIp derived from repo.wanIpFlow().
+
+L80-86 Latency flows (_latencyGoogle, _latencyCloudflare).
+
+L88-115 pingLatency() function.
+     -> Creates SOCKS proxy at 127.0.0.1:1081.
+     -> Connects to google.com:443 and 1.1.1.1:443 via SOCKS.
+     -> BUG: Socks proxy type is java.net.Proxy.Type.SOCKS but the proxy
+        address is just a plain InetSocketAddress — this only works if
+        the device has a SOCKS server at 1081. No authentication handling.
+     -> BUG: Socket created but connect timeout is 5000ms; if first connect
+        hangs, second may be delayed. Sockets are closed in finally? No,
+        sock.close() is called explicitly after timing, but if connect
+        throws, close() is NOT called — leak. Actually, in catch blocks
+        close() is NOT called. MEMORY LEAK / FD LEAK.
+
+L117-118 _logText, _activeLog flows.
+
+L120  private var logPollingJob: Job? = null
+
+L122-127 LOG_PATHS map.
+      -> "openvpn" key points to /data/adb/sshcustom/run/openvpn.log.
+      -> VPNCHAIN REFERENCE: openvpn log path for VPN Chain feature.
+
+L129-136 switchLog() function.
+
+L138-139 _profiles, profiles flows.
+
+L141-142 _activeProfileId flow.
+
+L144-145 _settings flow.
+
+L147-148 settingsNeedRestart flag.
+
+L150-160 VPN Chain flows:
+      _vpnConfigs, _selectedVpnConfig, _vpnChainState, _chainExitIp, _vpnBusy.
+      -> VPNCHAIN REFERENCE: All VPN Chain related state.
+
+L162-173 init block: checkRoot, loadPersistedData, bindRootService,
+      startLogPolling, startVpnPolling.
+
+L175-198 checkRoot() — root detection via libsu.
+      -> BUG: Shell.isAppGrantedRoot() can return null; handled.
+      -> BUG: The fallback `Shell.cmd("id").exec()` runs on main thread
+         inside IO dispatcher, okay. But `r.out.firstOrNull()?.contains(...)`
+         could NPE if out is null? libsu returns empty list, safe.
+
+L200-206 loadPersistedData().
+
+L208-216 bindRootService() — binds RootService.
+      -> BUG: If root is not available, catch silently swallows. App works
+         read-only but user gets no feedback about why features don't work
+         until NoRootScreen shows.
+
+L218-225 startLogPolling() — launches coroutine polling every 2s.
+
+L227-244 refreshLogInternal() — reads log via rootBinder or Shell.cmd fallback.
+      -> BUG: `binder.readLogFile(logPath, 300)` — if binder is null, falls
+         back to Shell.cmd. But if binder becomes null mid-operation,
+         no issue since it's a local val capture.
+
+L246-270 startTunnel() — sets loading, pendingAction, override, calls binder or shell.
+      -> BUG: `delay(8_000)` is hardcoded — if daemon starts faster or slower,
+         UI shows wrong state. Should poll status instead of blind delay.
+      -> BUG: Exception catch is empty — if start fails, user sees "Starting"
+         for 8s then flips to possibly wrong state with no error shown.
+
+L272-293 stopTunnel() — similar pattern with 5s delay.
+      -> Same blind-delay bug.
+
+L295-320 restartTunnel() — two-phase delay (2s + 8s).
+      -> Same blind-delay bug, compounded.
+
+L322  fun reloadConfig() = restartTunnel()
+
+L324-336 clearLog(), refreshLog().
+
+L338-352 refreshVpnConfigs() — lists .ovpn files.
+      -> VPNCHAIN REFERENCE: Lists /data/adb/sshcustom/vpnchain/configs/.
+      -> BUG: `rootBinder?.listVpnConfigs()` catch swallows exception.
+      -> BUG: Fallback `Shell.cmd("ls -1 ...")` doesn't handle paths with
+         spaces (though path is fixed).
+
+L354-357 selectVpnConfig().
+
+L359-380 startVpnChain() — validates SSH connected, config selected, then starts.
+      -> VPNCHAIN REFERENCE: Entire function is VPN Chain control.
+      -> BUG: `safeCfg = cfg.replace("'", "'\\''")` — shell escaping is
+         incomplete; other metacharacters (", $, `, |, &, ;, <, >) are not
+         escaped. Command injection possible if config filename is malicious.
+      -> BUG: `Shell.cmd("... '$safeCfg' &")` — the `&` backgrounds in shell
+         but Shell.cmd may not handle backgrounding correctly. The `.exec()`
+         will likely return immediately, making error detection impossible.
+
+L382-393 stopVpnChain().
+      -> VPNCHAIN REFERENCE: VPN Chain stop.
+
+L395-416 startVpnPolling() — polls VPN chain status every 2s.
+      -> VPNCHAIN REFERENCE: Entire function.
+      -> BUG: `_chainExitIp.value = repo.fetchChainExitIp()` is called every
+         2s while connected — excessive network polling. Should cache and
+         refresh less frequently (e.g., 30s).
+
+L418-440 Profile CRUD functions.
+
+L442-462 applyProfileToSettings() — writes to settings.ini via binder.
+      -> BUG: `rootBinder?.writeSettings(pairs)` — if binder is null, falls
+         back to fallbackWriteSettings. But the catch block swallows ALL
+         exceptions, so if write fails silently, user thinks it succeeded.
+
+L464-478 fallbackWriteSettings() — uses Shell.cmd with sed.
+      -> BUG: Escaping replaces \, ", `, $, | but misses &, ;, <, >, newlines,
+         and tab. If a profile field contains `; rm -rf /`, it will execute.
+         This is a SHELL INJECTION VULNERABILITY in the fallback path.
+
+L480-485 updateSettings(), applySettingsToIni().
+
+L487-515 applySettingsToIni() — writes non-SSH settings.
+      -> BUG: Same incomplete shell escaping as fallbackWriteSettings.
+      -> BUG: `Shell.cmd("touch $autostart")` — no quoting on $autostart
+         path, though path is fixed so low risk.
+
+L517-525 onCleared() — unbinds RootService.
+
+================================================================================
+FILE: app/src/main/java/com/sshcustom/vpnchain/SSHCustomApp.kt
+================================================================================
+L1   package com.sshcustom.vpnchain
+     -> VPNCHAIN REFERENCE: package path.
+
+L2-4 Imports: Application, Shell.
+
+L6   class SSHCustomApp : Application() {
+
+L8-15 onCreate: configures libsu Shell with FLAG_MOUNT_MASTER, timeout 15.
+      -> No bugs. Clean and correct.
+
+================================================================================
+FILE: app/src/main/java/com/sshcustom/vpnchain/data/Repository.kt
+================================================================================
+L1   package com.sshcustom.vpnchain.data
+
+L2-14 Imports: Context, SharedPreferences, domain models, kotlinx.serialization,
+     OkHttp, File, TimeUnit.
+
+L16  private const val PREFS_NAME   = "sshcustom_prefs"
+     -> VPNCHAIN REFERENCE: "sshcustom" in pref name — acceptable.
+
+L17-23 Preference keys.
+
+L25-31 KDoc comment.
+
+L33  class DaemonRepository(private val context: Context) {
+
+L35-36 prefs initialization.
+
+L38  private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+L40-44 http client (2s timeouts for loopback).
+
+L46  private val baseUrl = "http://127.0.0.1:9190"
+
+L48-51 longHttp client (8s timeouts for chain lookups).
+      -> VPNCHAIN REFERENCE: "chain" in comment.
+
+L53-62 statusFlow() — polls daemon status every second.
+      -> BUG: No backoff on failure — if daemon is down, still polls every 1s
+         forever, wasting battery.
+
+L64-82 netSpeedFlow() — reads /proc/net/dev every second.
+      -> BUG: `readNetBytes()` sums ALL interfaces including the tunnel
+         interface itself, so the displayed "Net Speed" includes tunnel
+         traffic, not just WAN throughput. This is misleading.
+
+L84-89 wanIpFlow() — fetches WAN IP every 60s.
+
+L91-112 fetchStatus() — HTTP GET /api/v1/status.
+      -> BUG: If daemon returns malformed JSON, returns DaemonStatus() defaults.
+         No logging of parse errors for debugging.
+
+L114-126 fetchWanIp() — HTTP GET /api/v1/network/public-ip.
+      -> BUG: Same silent swallowing of all exceptions.
+
+L128-142 Profile persistence (loadProfiles, saveProfiles, loadActiveProfileId, etc).
+
+L144-156 Settings persistence.
+
+L158-162 VPN Chain persistence.
+      -> VPNCHAIN REFERENCE: KEY_VPN_CONFIG, loadVpnConfig, saveVpnConfig.
+
+L164-174 fetchChainExitIp() — fetches https://ipinfo.io/json.
+      -> VPNCHAIN REFERENCE: "Chain" in function name.
+      -> BUG: Uses longHttp with 8s timeout but ipinfo.io can be slow.
+         No fallback service. If ipinfo.io is blocked, always returns "—".
+      -> BUG: No caching — called every 2s from ViewModel.startVpnPolling().
+
+L176-192 saveLastState(), loadLastState().
+
+L194-210 readNetBytes() — reads /proc/net/dev.
+      -> BUG: Sums ALL interfaces including tunnel (tun0, etc.), so speed
+         measurement is inflated by tunnel overhead.
+
+================================================================================
+FILE: app/src/main/java/com/sshcustom/vpnchain/domain/Models.kt
+================================================================================
+L1   package com.sshcustom.vpnchain.domain
+
+L3  import kotlinx.serialization.Serializable
+
+L6-21 @Serializable data class DaemonStatus(...)
+      -> Fields: connected, uptimeSeconds, sshMode, networkMode, bytesSent,
+         bytesRecv, channelPoolSize, channelPoolAvail, activeConnections,
+         version, memRssMb, cpuPercent, upKbps, downKbps, lastError.
+      -> No bugs. Clean data class.
+
+L24-40 @Serializable data class Profile(...)
+      -> Fields: id, name, host, port, user, password, mode, sniHost,
+         proxyHost, proxyPort, payloadEnabled, payload.
+      -> BUG: password stored in plaintext in SharedPreferences JSON.
+         No encryption. This is a SECURITY ISSUE.
+
+L43-66 @Serializable data class AppSettings(...)
+      -> Fields: networkMode, socksPort, tproxyPort, redirPort, quic,
+         proxyTcp, proxyUdp, dnsHijackTcp, dnsHijackUdp, dnsHijackMode,
+         channelPool, channelPoolSize, tcpBufferTuning, ipv6,
+         autostartTunnel, hotspotSharing.
+      -> BUG: Port defaults (1081, 9899, 9799) changed from box defaults to
+         avoid conflict, but no validation that these ports are actually free.
+
+L69-76 Sealed class TunnelState.
+      -> No bugs.
+
+L78  data class NetSpeed(val upKbs: Float = 0f, val downKbs: Float = 0f)
+
+L80-86 Sealed class VpnChainState.
+      -> VPNCHAIN REFERENCE: "VpnChain" in class name.
+      -> States: Stopped, Connecting, Connected, Error.
+      -> No bugs.
+
+================================================================================
+FILE: app/src/main/java/com/sshcustom/vpnchain/service/SSHControlService.kt
+================================================================================
+L1   package com.sshcustom.vpnchain.service
+
+L2-5 Imports: Intent, IBinder, Shell, RootService.
+
+L7-12 KDoc.
+
+L14  class SSHControlService : RootService() {
+
+L16  override fun onBind(intent: Intent): IBinder = LocalBinder()
+
+L18  inner class LocalBinder : android.os.Binder() {
+
+L20-28 Path constants.
+      -> vpnConfigDir = "/data/adb/sshcustom/vpnchain/configs"
+      -> ovpnService = "/data/adb/sshcustom/scripts/ovpn.service"
+      -> ovpnLog = "/data/adb/sshcustom/run/openvpn.log"
+      -> VPNCHAIN REFERENCE: All three paths are VPN Chain related.
+
+L30-49 VPN Chain methods:
+      listVpnConfigs(): ls -1 '$vpnConfigDir' — single-quoted path, safe.
+      startVpnChain(config): shell-escapes single quotes only.
+         -> BUG: Same incomplete escaping as ViewModel — only ' is escaped.
+            Other shell metacharacters can inject commands.
+      stopVpnChain(): calls ovpn.service stop.
+      vpnChainStatus(): calls ovpn.service status.
+      readOvpnLog(): reads ovpnLog.
+      -> VPNCHAIN REFERENCE: All methods.
+
+L51-56 Tunnel control methods (startTunnel, stopTunnel, restartTunnel, startIdle).
+
+L58-61 isRunning().
+
+L63-64 forceCleanup().
+
+L66-75 setAutostart(), getAutostart().
+
+L77-90 Log methods (readLogFile, clearLogFile, readLog, clearLog).
+      -> readLogFile uses single-quoted path: `tail -n $lines '$path'`.
+         -> BUG: If path contains a single quote, the command breaks because
+            the path is wrapped in single quotes but no escaping of internal
+            quotes is done. However, paths are fixed so low risk.
+
+L92-124 writeSetting(), writeSettings(), readSetting().
+      -> writeSetting: escapes \, ", `, $, | but misses &, ;, <, >, newline.
+         -> BUG: SHELL INJECTION VULNERABILITY if value contains malicious chars.
+      -> writeSettings: builds a shell script with multiple sed commands.
+         Same escaping bug, compounded because multiple values are injected.
+      -> readSetting: grep + cut + tr — safe for fixed keys.
+
+L126-129 private fun shell(cmd: String): String.
+      -> Simply runs Shell.cmd and joins out+err.
+
+================================================================================
+FILE: app/src/main/java/com/sshcustom/vpnchain/ui/screens/HomeScreen.kt
+================================================================================
+L1   package com.sshcustom.vpnchain.ui.screens
+
+L2-15 Imports: animation, Canvas, layout, LazyColumn, runtime, Alignment,
+     Modifier, Offset, Size, Color, StrokeCap, Stroke, nestedScroll,
+     FontFamily, FontWeight, dp, sp, DaemonStatus, NetSpeed, TunnelState,
+     delay, Miuix components.
+
+L17-34 HomeScreen composable signature with many parameters.
+
+L36  if (!hasRoot) { NoRootScreen(bottomPadding); return }
+      -> Early return if no root.
+
+L38-58 Scaffold with TopAppBar and LazyColumn.
+      -> Content: StatusCard, ControlButtons, InfoGrid, LatencyCard.
+
+L60-78 Status helpers (statusColor, statusLabel, statusSubtitle).
+      -> Colors: Connected=green, Starting=yellow, Stopping=orange, Error=red.
+
+L80-142 StatusCard composable.
+      -> Shows status label, uptime, mode, version, error message.
+      -> No bugs.
+
+L144-183 StatusIcon composable with Canvas.
+      -> Rotating arc while Starting/Stopping, filled disc when Connected.
+      -> Uses rememberInfiniteTransition — correct.
+      -> No bugs.
+
+L185-204 spinnerFrame() — braille spinner animation.
+      -> BUG: `LaunchedEffect(active)` starts a while(true) loop when active.
+         If active becomes false, the coroutine is cancelled, but if the
+         composable leaves composition while active=true, the coroutine
+         leaks until composition ends. Standard pattern, acceptable.
+
+L206-252 ControlButtons composable.
+      -> Shows spinner label when pendingAction != null.
+      -> Three buttons: Start, Stop, Restart — always visible and clickable.
+      -> BUG: Buttons are always clickable even when operation is in flight.
+         No debouncing — rapid taps could queue multiple start/stop commands.
+
+L254-310 InfoGrid composable with 4 InfoCards in 2 rows.
+      -> WAN, Net Speed, Resources, Connections.
+      -> No bugs.
+
+L312-330 InfoCard composable.
+      -> Fixed height 100.dp.
+      -> No bugs.
+
+L332-354 NoRootScreen composable.
+      -> Shows lock emoji and instructions.
+      -> BUG: Uses "🔒" emoji directly — may not render on all devices.
+         Should use a vector icon instead.
+
+L356-390 LatencyCard composable.
+      -> Shows Google and Cloudflare latency.
+      -> No bugs.
+
+L392-399 formatUptime() — formats seconds to HH:MM:SS or MM:SS.
+      -> No bugs.
+
+================================================================================
+FILE: app/src/main/java/com/sshcustom/vpnchain/ui/screens/LogsScreen.kt
+================================================================================
+L1   package com.sshcustom.vpnchain.ui.screens
+
+L2-14 Imports: background, layout, LazyColumn, LazyListScope, items, remember,
+     mutableStateOf, Alignment, Modifier, Color, nestedScroll, FontFamily, sp,
+     Miuix components.
+
+L16-17 LOG_KEYS and LOG_LABELS.
+      -> "openvpn" key included for VPN Chain logs.
+      -> VPNCHAIN REFERENCE: "openvpn" in LOG_KEYS.
+
+L19-31 LogsScreen composable signature.
+
+L33-48 Auto-scroll logic with derivedStateOf for atBottom detection.
+      -> No bugs.
+
+L50-119 Scaffold with TopAppBar, dropdown for log selection, log content.
+      -> Log background is Color(0xFF0D0D0D) — dark terminal look.
+      -> No bugs.
+
+L121-133 LogLine composable.
+      -> Color-codes by [Error], [Warning], [Debug] tags.
+      -> No bugs.
+
+================================================================================
+FILE: app/src/main/java/com/sshcustom/vpnchain/ui/screens/ProfilesScreen.kt
+================================================================================
+L1   package com.sshcustom.vpnchain.ui.screens
+
+L2-16 Imports: layout, LazyColumn, itemsIndexed, KeyboardOptions, runtime,
+     Alignment, Modifier, Color, nestedScroll, KeyboardType, PasswordVisualTransformation,
+     VisualTransformation, dp, sp, Profile, Miuix components, UUID.
+
+L18-21 SSH mode helpers.
+
+L23-89 ProfilesScreen composable.
+      -> Shows profile list, add button, empty state.
+      -> No bugs in list logic.
+
+L91-116 ProfileCard composable.
+      -> Shows name, host:port, mode badge, active indicator, Select/Edit/Delete.
+      -> No bugs.
+
+L118-260 ProfileEditorContent composable.
+      -> Uses LazyColumn inside SuperBottomSheet for scrollability.
+      -> Fields: name, host, port, user, password, mode, sniHost, proxyHost,
+         proxyPort, payloadEnabled, payload.
+      -> BUG: Port field filters to digits only but allows empty string.
+         `port.toIntOrNull()` in save handler catches this, okay.
+      -> BUG: proxyPort.toIntOrNull() ?: 3128 — if user clears field, silently
+         defaults to 3128 without warning. Acceptable UX.
+      -> Save validation: name and host required, port must be 1-65535.
+      -> No critical bugs.
+
+================================================================================
+FILE: app/src/main/java/com/sshcustom/vpnchain/ui/screens/SettingsScreen.kt
+================================================================================
+L1   package com.sshcustom.vpnchain.ui.screens
+
+L2-16 Imports: layout, LazyColumn, LazyListScope, KeyboardOptions, runtime,
+     Modifier, nestedScroll, LocalContext, KeyboardType, dp, sp, AppSettings,
+     Miuix components.
+
+L18-35 Dropdown option lists (traffic mode, DNS mode).
+
+L37-196 SettingsScreen composable.
+      -> Sections: Ports, Traffic Mode, Proxy Behaviour, Performance, DNS Hijack,
+         IPv6, Hotspot Sharing, Boot Behaviour, About.
+      -> PortField: filters digits, validates 1024-65535.
+      -> BUG: PortField calls onDone on every keystroke, triggering settings
+         change and settingsNeedRestart flag immediately. This is noisy but
+         functionally okay.
+      -> About section has Developer link to GoodyOG GitHub.
+      -> Source link: github.com/GoodyOG/sshcustom-vpnchain
+         -> VPNCHAIN REFERENCE: URL contains "sshcustom-vpnchain".
+      -> App version display.
+      -> Module data path: /data/adb/sshcustom
+      -> No critical bugs.
+
+L198-210 settingsSection() helper.
+
+L212-225 PortField() helper.
+      -> No bugs.
+
+================================================================================
+FILE: app/src/main/java/com/sshcustom/vpnchain/ui/screens/VpnChainScreen.kt
+================================================================================
+L1   package com.sshcustom.vpnchain.ui.screens
+
+L2-13 Imports: layout, LazyColumn, runtime, Modifier, Color, nestedScroll,
+     FontFamily, FontWeight, dp, sp, VpnChainState, Miuix components.
+
+L15-22 chainColor() and chainLabel() helpers.
+      -> VPNCHAIN REFERENCE: Function names and state type.
+
+L24-118 VpnChainScreen composable.
+      -> VPNCHAIN REFERENCE: Entire file is VPN Chain UI.
+      -> Status card shows "OpenVPN · {state}" and exit IP.
+      -> Requirement note explains OpenVPN chaining.
+      -> Config selector dropdown for .ovpn files.
+      -> Start/Stop buttons.
+      -> Warning if SSHCustom not connected.
+      -> Credentials note points to vpnchain/auth.txt.
+         -> VPNCHAIN REFERENCE: "vpnchain/auth.txt" path.
+      -> No critical bugs in UI logic.
+
+================================================================================
+FILE: app/src/main/java/com/sshcustom/vpnchain/ui/theme/Theme.kt
+================================================================================
+L1   package com.sshcustom.vpnchain.ui.theme
+
+L2-5 Imports: isSystemInDarkTheme, Composable, MiuixTheme, darkColorScheme, lightColorScheme.
+
+L7-14 SSHCustomTheme composable.
+      -> Wraps MiuixTheme with system dark/light detection.
+      -> No bugs.
+
+================================================================================
+FILE: app/build.gradle.kts
+================================================================================
+L1-4 Plugins: android.application, kotlin.android, kotlin.compose, kotlin.serialization.
+
+L6-9 android block: namespace = "com.sshcustom.vpnchain", compileSdk = 35.
+      -> VPNCHAIN REFERENCE: namespace contains "vpnchain".
+
+L11-18 defaultConfig: applicationId = "com.sshcustom.vpnchain", minSdk=28,
+      targetSdk=35, versionCode=20305, versionName="2.3.5".
+      -> BUG: VERSION file says 2.3.12 but build.gradle.kts says 2.3.5.
+         VERSION MISMATCH between app and module.
+
+L20-30 signingConfigs: reads env vars for CI keystore.
+      -> BUG: storePassword, keyPassword fallback to empty string if env vars
+         missing — will cause signing failure instead of graceful skip.
+
+L32-46 buildTypes: release with minifyEnabled=true, shrinkResources=true.
+      -> debug has same package ID — good for root grant survival.
+
+L48-51 compileOptions/kotlinOptions: Java 17.
+
+L53-57 buildFeatures: compose=true, buildConfig=true.
+
+L59-63 lint: checkReleaseBuilds=false, abortOnError=false.
+
+L65-70 splits: abi arm64-v8a only, universalApk=false.
+      -> Good for size reduction.
+
+L72-81 packaging: excludes metadata and kotlin builtins.
+
+L83-108 dependencies block.
+      -> miuix 0.7.2, libsu 6.0.0, okhttp 4.12.0, kotlinx-serialization 1.7.1,
+         coroutines 1.8.1, activity-compose 1.9.0, lifecycle 2.7.0, core-ktx 1.13.1,
+         compose BOM 2024.06.00.
+      -> No version conflicts apparent.
+      -> BUG: lifecycle-viewmodel-compose 2.7.0 is older than compileSdk 35.
+         Should be 2.8.x for better compatibility. Not critical.
+
+================================================================================
+FILE: app/settings.gradle.kts
+================================================================================
+L1-4 pluginManagement block.
+
+L6-12 dependencyResolutionManagement: repositoriesMode=FAIL_ON_PROJECT_REPOS,
+      repos: google, mavenCentral, jitpack.
+
+L14  rootProject.name = "SSHCustomVPNChain"
+      -> VPNCHAIN REFERENCE: project name contains "VPNChain".
+
+L15-16 Comment: No include() — settings.gradle.kts is at app root.
+      -> No bugs.
+
+================================================================================
+FILE: app/gradle/libs.versions.toml
+================================================================================
+L1-2 [versions]: agp="8.7.3", kotlin="2.1.0".
+
+L4-5 [libraries]: placeholder comment.
+
+L7-10 [plugins]: android-application, kotlin-android, kotlin-compose,
+      kotlin-serialization.
+      -> No bugs.
+
+================================================================================
+FILE: app/src/main/AndroidManifest.xml
+================================================================================
+L1  XML declaration.
+
+L3  <manifest> root.
+
+L5-6 Uses permissions: INTERNET, FOREGROUND_SERVICE.
+
+L8  CHANGE_NETWORK_STATE for cleartext HTTP to loopback.
+      -> Actually, this permission is not needed for loopback HTTP.
+      -> The real reason for cleartext is `android:usesCleartextTraffic="true"`.
+      -> Minor: permission is unnecessary but harmless.
+
+L10-18 Application block:
+      android:name=".SSHCustomApp"
+      android:label="SSHCustom"
+      android:icon="@drawable/ic_launcher"
+      android:theme="@style/Theme.SSHCustom"
+      android:allowBackup="false"
+      android:supportsRtl="true"
+      android:usesCleartextTraffic="true"
+      -> No bugs.
+
+L20-27 MainActivity declaration with intent-filter MAIN/LAUNCHER.
+      -> configChanges includes many flags — good for rotation handling.
+
+L29-32 SSHControlService declaration with process=":root".
+      -> exported="false" — secure.
+      -> No bugs.
+
+================================================================================
+FILE: app/src/main/res/drawable/ic_launcher.xml
+================================================================================
+L1-2  XML declaration and vector root.
+      -> Width/height 108dp, viewport 108x108.
+
+L4    Background fill: #1A1A1A (dark grey).
+
+L5-6  Lock icon pathData in #4CAF50 (green).
+      -> No bugs. Simple lock vector icon.
+
+================================================================================
+FILE: app/src/main/res/values/themes.xml
+================================================================================
+L1-2  XML declaration and resources root.
+
+L3-8  Comment explaining theme purpose.
+
+L10-15 Theme.SSHCustom style:
+      parent="android:Theme.NoTitleBar"
+      windowBackground=black, statusBarColor=transparent,
+      navigationBarColor=transparent, windowDrawsSystemBarBackgrounds=true.
+      -> No bugs. Minimal theme, miuix handles the rest.
+
+================================================================================
+FILE: app/proguard-rules.pro
+================================================================================
+L1-3  Header comment.
+
+L5-6  Keep app classes.
+
+L8-10 Keep libsu / RootService classes.
+
+L12-16 Keep miuix and gaze classes.
+
+L18-24 Keep kotlinx.serialization classes and annotations.
+
+L26-28 Keep kotlin.reflect and coroutines.
+
+L30-32 Keep OkHttp/Okio.
+
+L34-38 Keep AndroidX / Compose classes.
+
+L40-42 Keep Compose compiler lambda metadata.
+
+L44-45 Remove Preview functions in release.
+      -> No bugs. Comprehensive ProGuard rules.
+
+================================================================================
+FILE: app/gradle.properties
+================================================================================
+L1    JVM args: -Xmx2048m, UTF-8.
+
+L2    android.useAndroidX=true
+
+L3    android.enableJetifier=false
+
+L4    kotlin.code.style=official
+
+L5    android.nonTransitiveRClass=true
+
+L7-8  R8 full mode enabled.
+      -> No bugs.
+
+================================================================================
+FILE: module/customize.sh
+================================================================================
+L1    Shebang: #!/system/bin/sh
+
+L2-4  Header comment and SKIPUNZIP=1.
+
+L6-9  ui_print banner: "SSHCustom-VPNChain v2.0.0".
+      -> VPNCHAIN REFERENCE: "VPNChain" in banner text.
+      -> BUG: Hardcoded version "v2.0.0" does not match VERSION file (2.3.12)
+         or module.prop (v2.3.12). STALE VERSION STRING.
+
+L11-18 ABI check: only arm64-v8a allowed.
+      -> aborts on other architectures.
+
+L20-22 Extract ZIP to MODPATH.
+
+L24-32 Set permissions recursively.
+      -> set_perm_recursive on scripts/ and bin/.
+      -> set_perm on individual files.
+
+L34-40 Create data directories under /data/adb/sshcustom.
+      -> mkdir -p for run/state, bin, scripts, vpnchain/configs, vpnchain/run.
+      -> chmod 700 on WORK_DIR.
+      -> VPNCHAIN REFERENCE: "vpnchain" directories.
+
+L42-55 _install_bin() helper.
+      -> Copies binaries from MODPATH/bin to WORK_DIR/bin.
+      -> Installs sshcustomd, tun2proxy, openvpn.
+      -> VPNCHAIN REFERENCE: "openvpn" is VPN Chain binary.
+
+L57-70 _install_script() helper.
+      -> Copies scripts. ssh.service, ssh.iptables, ssh.tool required.
+      -> ovpn.service and vpnchain.iptables are optional (warn if missing).
+      -> VPNCHAIN REFERENCE: "ovpn.service", "vpnchain.iptables".
+
+L72-82 Install settings.ini (preserve existing).
+
+L84-89 VPN Chain auth template.
+      -> Creates vpnchain/auth.txt with username/password placeholder.
+      -> VPNCHAIN REFERENCE: "vpnchain/auth.txt".
+
+L91-99 Migration from old path /data/adb/sshcustom-vpnchain.
+      -> VPNCHAIN REFERENCE: old path contains "vpnchain".
+
+L101-112 _verify() helper and verification calls.
+      -> Verifies sshcustomd, ssh.service, ssh.iptables, ssh.tool, settings.ini.
+      -> Does NOT verify openvpn or ovpn.service — acceptable since optional.
+
+L114-118 Completion banner.
+      -> VPNCHAIN REFERENCE: "SSHCustom-VPNChain" in banner.
+
+================================================================================
+FILE: module/service.sh
+================================================================================
+L1-2  Shebang and header comment.
+      -> "SSHCustom-VPNChain" in comment.
+      -> VPNCHAIN REFERENCE.
+
+L4    MODDIR="${0%/*}"
+
+L5-6  WORK_DIR, RUN_DIR, SERVICE, LOG, AUTOSTART_MARKER.
+
+L8    mkdir -p "${RUN_DIR}"
+
+L10   { printf '%s boot service started\n' "$(date ...)"
+
+L12-22 Wait for boot_completed (max 5 min, 100 × 3s).
+      -> BUG: If sys.boot_completed is never 1 (e.g., boot loop), gives up
+         after 5 min and starts anyway. Acceptable fallback.
+
+L24-35 Start daemon in idle mode via ssh.service start-idle.
+      -> Updates module.prop description to idle state.
+      -> BUG: `sed -i` on module.prop uses hardcoded path
+         `/data/adb/modules/sshcustom-vpnchain/module.prop`.
+         If module ID differs, this fails silently.
+
+L37-66 Autostart logic if marker exists.
+      -> Waits for default route (max 60s).
+      -> Waits for daemon API health (max 10s) via curl.
+      -> Starts tunnel via API if curl available, else via script.
+      -> BUG: `curl -fsS --max-time 1` for health check — if daemon is slow
+         to start API, may fail and fall back to script start, causing
+         potential double-start (script may start a second instance).
+      -> BUG: `_started` variable is never checked before script fallback
+         in a way that prevents double-start. The script `ssh.service start`
+         checks if already running, so low risk.
+
+L68   exit 0
+
+================================================================================
+FILE: module/uninstall.sh
+================================================================================
+L1-5  Shebang and header comment.
+      -> "SSHCustom-VPNChain" in comment.
+      -> VPNCHAIN REFERENCE.
+
+L7-11 Path definitions.
+
+L13-14 Stop VPN Chain if running.
+      -> VPNCHAIN REFERENCE: OVPN_SERVICE.
+
+L16-17 Stop SSH tunnel + daemon.
+
+L19-21 Clean iptables (both ssh and vpnchain).
+      -> VPNCHAIN REFERENCE: VPNCHAIN_IPT.
+
+L23-24 Kill remaining processes.
+
+L26-28 Restore IPv6.
+
+L30-31 Remove ALL module data: rm -rf "${WORK_DIR}".
+      -> BUG: This deletes /data/adb/sshcustom entirely, including user
+         configs, profiles, logs, vpnchain configs. This is intentional for
+         clean uninstall but destructive.
+
+L33-34 Remove battery optimization whitelist.
+      -> `dumpsys deviceidle whitelist -com.sshcustom.vpnchain`
+      -> BUG: The `-` prefix is correct for removal, but if the package was
+         never whitelisted, this produces an error swallowed by `|| true`.
+         Harmless.
+
+L36   exit 0
+      -> No critical bugs.
+
+================================================================================
+FILE: module/module.prop
+================================================================================
+L1    id=sshcustom-vpnchain
+      -> VPNCHAIN REFERENCE: id contains "vpnchain".
+
+L2    name=SSHCustom-VPNChain
+      -> VPNCHAIN REFERENCE: name contains "VPNChain".
+
+L3    version=v2.3.12
+
+L4    versionCode=231200
+
+L5    author=GoodyOG
+
+L6    description=[ 💤 ] SSHCustom-VPNChain idle
+      -> VPNCHAIN REFERENCE: description contains "VPNChain".
+
+L7    updateJson=https://raw.githubusercontent.com/GoodyOG/sshcustom-vpnchain/main/module/update.json
+      -> VPNCHAIN REFERENCE: URL contains "sshcustom-vpnchain".
+
+================================================================================
+FILE: module/settings.ini
+================================================================================
+L1-4  Header comment.
+      -> "SSHCustom-VPNChain Settings" in comment.
+      -> VPNCHAIN REFERENCE.
+
+L6-9  Busybox bootstrap.
+
+L11-18 Path definitions (box_dir, box_run, box_log, box_pid, bin_dir, box_run_state).
+      -> BUG: Variable names use "box_" prefix (copied from boxproxy).
+         This is confusing but functionally okay.
+
+L20-37 SSH Connection settings.
+
+L39-42 SSH mode and SNI host.
+
+L44-46 HTTP proxy settings.
+
+L48-51 Payload injection.
+
+L53-61 Traffic Interception settings.
+      -> Comments mention "box defaults" and "box module conflict".
+      -> VPNCHAIN REFERENCE: "box" references are from boxproxy inspiration.
+
+L63-69 Proxy Behaviour.
+
+L71-74 DNS settings.
+
+L76-79 Speed Boost.
+
+L81-83 IPv6.
+
+L85-88 Hotspot sharing.
+
+L90-92 cgroup blkio.
+
+L94-95 Module metadata path.
+
+L97-110 log() function definition.
+      -> Re-evaluates time on every call.
+      -> If stdout is a TTY, prints to stdout; else appends to box_log.
+      -> No bugs.
+
+================================================================================
+FILE: module/update.json
+================================================================================
+L1-6  JSON object.
+      -> version: "v2.0.0" — STALE, does not match VERSION (2.3.12) or
+         module.prop (v2.3.12).
+      -> versionCode: 20000 — STALE.
+      -> zipUrl: contains "sshcustom-vpnchain".
+      -> changelog: contains "sshcustom-vpnchain".
+      -> VPNCHAIN REFERENCE: URL and repo name contain "vpnchain".
+      -> BUG: Version mismatch — update system will report wrong version.
+
+================================================================================
+FILE: module/action.sh
+================================================================================
+L1-2  Shebang and header comment.
+      -> "SSHCustom-VPNChain" in comment.
+      -> VPNCHAIN REFERENCE.
+
+L4-6  Path definitions.
+
+L8    printf 'SSHCustom-VPNChain — please wait...\n'
+      -> VPNCHAIN REFERENCE.
+
+L10-31 case statement for start/stop/status/toggle.
+      -> BUG: `sh "${SERVICE}" status` in case `status` returns output but
+         action.sh doesn't echo it — KSU Action UI would be empty for status.
+      -> Default toggle: checks status, then stops or starts.
+      -> No critical bugs.
+
+L33-34 Done message.
+
+================================================================================
+FILE: module/scripts/ssh.service
+================================================================================
+L1-4  Shebang and header comment.
+      -> "SSHCustom-VPNChain" in comment.
+      -> VPNCHAIN REFERENCE.
+
+L6-7  Source settings.ini.
+
+L9-10 BIN and script paths.
+
+L12-20 bin_alive(), api_alive() helpers.
+      -> api_alive tries curl, wget, or falls back to bin_alive.
+      -> BUG: wget fallback uses `-O /dev/null` but doesn't suppress stderr
+         fully (only `>/dev/null 2>&1` on the wget command, but the outer
+         `elif` condition captures exit code correctly. Okay.
+
+L22-34 check_bin() — verifies binary exists and is executable, logs version.
+      -> No bugs.
+
+L36-52 is_idle_mode() — checks /proc/<pid>/cmdline for --idle flag.
+      -> Uses `tr '\0' ' '` to read cmdline.
+      -> No bugs.
+
+L54-96 start_daemon() — complex daemon startup logic.
+      -> Handles idle→full restart, existing daemon check.
+      -> BUG: `killall sshcustomd 2>/dev/null || true` before start — kills
+         ALL sshcustomd processes system-wide, not just this module's. If
+         another user runs sshcustomd, it's killed. Low probability.
+      -> BUG: `nohup "${BIN}" run ${flags} >> "${box_log}" 2>&1 &`
+         — nohup with redirection inside a shell function may have
+         portability issues on some Android shells, but generally works.
+      -> Waits up to 5s for API. Good.
+
+L98-118 start_service() — full tunnel start.
+      -> Calls start_daemon, applies blkio.
+      -> Comment notes iptables are now managed by daemon.
+      -> No bugs.
+
+L120-143 stop_service() — stops daemon and cleans up.
+      -> Calls iptables disable first.
+      -> Kills daemon with TERM, waits 5s, then KILL.
+      -> BUG: `killall sshcustomd 2>/dev/null || true` again kills all
+         instances system-wide.
+      -> Restores speed settings.
+      -> No critical bugs.
+
+L145-160 status_service() — prints status with PID, memory, mode.
+      -> Memory formatting: converts KB to MB if >= 1024.
+      -> No bugs.
+
+L162-178 Main case statement.
+      -> Handles start, start-idle, stop, restart, status.
+      -> restart calls stop_service then start_service with 2s sleep.
+      -> No bugs.
+
+================================================================================
+FILE: module/scripts/ssh.iptables
+================================================================================
+L1-4  Shebang and header comment.
+      -> "SSHCustom-VPNChain" in comment.
+      -> VPNCHAIN REFERENCE.
+
+L6-7  Source settings.ini.
+
+L9-10 Runtime env and cap cache paths.
+
+L12-20 iptables command selection based on Android version.
+      -> Uses `iptables -w 100` for Android 11+.
+      -> No bugs.
+
+L22-32 fwmark / policy routing constants.
+      -> Multiple constants for TPROXY and TUN modes.
+      -> No bugs.
+
+L34-38 Intranet subnets (IPv4 and IPv6).
+      -> Standard RFC1918 + multicast + link-local ranges.
+      -> No bugs.
+
+L40-56 probe_user_group() — detects daemon UID/GID from PID.
+      -> Uses stat -c '%U' /proc/<pid>.
+      -> No bugs.
+
+L58-84 cap_has_target(), cap_has_match(), ip6_nat_supported(), probe_capabilities().
+      -> Probes kernel iptables capabilities and caches by boot_id.
+      -> BUG: `current_bid` stripping uses `tr -d '-'` then strips trailing
+         whitespace with a complex POSIX pattern. The whitespace strip is
+         unnecessary since boot_id has no trailing whitespace. Overly complex
+         but functional.
+      -> No bugs in capability detection.
+
+L86-98 apply_capability_downgrades() — downgrades mode if TPROXY unavailable.
+      -> No bugs.
+
+L100-118 setup_dns_forward(), cleanup_dns_forward() — DNS through tunnel.
+      -> Redirects UDP:53 to 127.0.0.1:5353, skipping uid 0.
+      -> No bugs.
+
+L120-136 sysctl helpers (disable_ipv6, enable_ipv6).
+      -> No bugs.
+
+L138-162 Chain helpers (ensure_chain, cleanup_chain, ensure_jump, del_jump).
+      -> No bugs.
+
+L164-180 IP rule/route helpers.
+      -> No bugs.
+
+L182-200 QUIC block helpers.
+      -> Uses DROP not REJECT — correct for Android kernels.
+      -> No bugs.
+
+L202-228 DNS hijack helpers.
+      -> No bugs.
+
+L230-302 start_redirect() — REDIRECT mode (NAT, TCP only).
+      -> Creates SSHC_EXTERNAL, SSHC_LOCAL chains.
+      -> BUG: `for sn in ${intranet}` — intranet variable contains newlines
+         (defined L34-35). In shell, unquoted variable expansion splits on
+         IFS (space/tab/newline), so this works. But if a subnet contains
+         spaces, it would break. Current definitions are safe.
+      -> Hotspot sharing: iterates wlan0, wlan1, ap0, swlan0, rndis0, ncm0, bt-pan.
+      -> No bugs.
+
+L304-312 stop_redirect() — cleanup.
+      -> No bugs.
+
+L314-360 start_tproxy() — TPROXY mode (mangle, TCP+UDP).
+      -> Policy routing with fwmark and local routes.
+      -> No bugs.
+
+L362-380 stop_tproxy() — cleanup.
+      -> No bugs.
+
+L382-452 start_tun_bypass() — TUN mode.
+      -> Uses tun_device variable.
+      -> BUG: `tun_device` is NEVER DEFINED in settings.ini or this script.
+         It defaults to empty string, which will cause `ip link set "" down`
+         and `ip tuntap del "" mode tun` to fail. This mode is broken
+         unless tun_device is added to settings.ini.
+
+L454-476 stop_tun_bypass() — cleanup.
+      -> Same tun_device bug on teardown.
+
+L478-484 cleanup_all() — calls all stop functions.
+      -> No bugs.
+
+L486-504 runtime_save() — saves active config to runtime env.
+      -> No bugs.
+
+L506-508 runtime_load() — loads runtime env.
+      -> No bugs.
+
+L510-540 apply_redirect_family(), apply_tproxy_family(), apply_tun_family().
+      -> apply_tun_family calls start_tun_bypass which has tun_device bug.
+
+L542-620 Main case statement (enable|renew, disable).
+      -> enable/renew: applies capability downgrades, probes user group,
+         disables captive portal detection, cleans all, applies mode.
+      -> BUG: Captive portal settings are modified system-wide without
+         restoring original user values on disable. The disable case restores
+         defaults (mode=1, detection=1, use_https=1, deletes server/URLs).
+         If user had custom captive portal settings before installing the
+         module, they are lost. This is a SYSTEM STATE MUTATION BUG.
+      -> disable: restores captive portal defaults, enables IPv6, cleans all.
+      -> No other critical bugs.
+
+================================================================================
+FILE: module/scripts/ssh.tool
+================================================================================
+L1-4  Shebang and header comment.
+      -> "SSHCustom-VPNChain" in comment.
+      -> VPNCHAIN REFERENCE.
+
+L6-7  Source settings.ini.
+
+L9-10 TOOL_LOG path, mkdir.
+
+L12-20 log() override for tool.log.
+      -> No bugs.
+
+L22-23 current_boot_id() — strips hyphens from boot_id.
+      -> No bugs.
+
+L25-43 probe_user_group() — same as ssh.iptables.
+      -> No bugs.
+
+L45-91 cgroup_blkio() — assigns daemon to blkio cgroup.
+      -> Tests writability before redirecting.
+      -> Falls back to foreground/top-app/apps directories.
+      -> No bugs.
+
+L93-118 apply_speed_boost() — tunes TCP buffers.
+      -> Saves originals to speed_orig.env.
+      -> Sets rmem_max/wmem_max to 134217728 (128MB).
+      -> No bugs.
+
+L120-139 restore_speed_settings() — restores TCP buffers from saved values.
+      -> No bugs.
+
+L141-150 Main case statement.
+      -> No bugs.
+
+================================================================================
+FILE: module/scripts/ovpn.service
+================================================================================
+FILE DOES NOT EXIST.
+-> VPN Chain OpenVPN service script is missing from source tree.
+-> It is referenced in customize.sh, uninstall.sh, service.sh, and
+   SSHControlService.kt, but the actual file is not present.
+-> This means VPN Chain feature cannot work as-is; the file must be created
+   or the references removed.
+
+================================================================================
+FILE: module/scripts/vpnchain.iptables
+================================================================================
+FILE DOES NOT EXIST.
+-> VPN Chain iptables script is missing from source tree.
+-> Referenced in customize.sh and uninstall.sh but not present.
+-> Same impact as ovpn.service — VPN Chain iptables rules cannot be applied.
+
+================================================================================
+FILE: build.sh
+================================================================================
+L1-2  Shebang and header comment.
+      -> "SSHCustom-VPNChain" in comment.
+      -> VPNCHAIN REFERENCE.
+
+L3    set -Eeuo pipefail
+
+L5    ROOT="$(cd "$(dirname "$0")" && pwd)"
+
+L6    VERSION="$(cat "$ROOT/VERSION" | tr -d '[:space:]')"
+
+L7-9  DIST, DAEMON_DIR, MODULE_DIR, ZIP_OUT, LDFLAGS.
+      -> ZIP_OUT name contains "SSHCustom-VPNChain".
+      -> VPNCHAIN REFERENCE.
+
+L11   echo "==> Building SSHCustom-VPNChain v${VERSION}"
+      -> VPNCHAIN REFERENCE.
+
+L13-14 mkdir -p for dist and module/bin.
+
+L16-17 Go version check.
+
+L19-22 Stamp module.prop version.
+      -> BUG: `sed -i.bak` creates .bak file then removes it. If sed fails,
+         .bak remains. Minor.
+
+L24-25 Run daemon tests.
+      -> `go test ./...` — tests may fail but build continues (`|| echo`).
+      -> No bugs.
+
+L27-36 Build sshcustomd for android/arm64.
+      -> Uses CGO_ENABLED=0, trimpath, buildvcs=false.
+      -> No bugs.
+
+L38-43 Check tun2proxy binary.
+      -> Warns if missing.
+      -> No bugs.
+
+L45-50 Package Magisk ZIP.
+      -> Excludes .DS_Store, __MACOSX, bin/.gitkeep, vpnchain/configs/.gitkeep.
+      -> VPNCHAIN REFERENCE: "vpnchain" in exclude path.
+      -> No bugs.
+
+L52-56 Completion message.
+      -> No bugs.
+
+================================================================================
+FILE: VERSION
+================================================================================
+L1    2.3.12
+      -> No bugs. Single version string.
+
+================================================================================
+FILE: goal.txt
+================================================================================
+L1-3  "SSHCustom-VPNChain — Complete Rebuild Prompt for Kiro"
+      -> VPNCHAIN REFERENCE: Title and throughout document.
+
+L4-EOF Entire document is a project specification / rebuild prompt.
+      -> Contains extensive references to "VPN Chain", "vpnchain", "VPNChain".
+      -> This is a documentation/spec file, not runtime code.
+      -> VPNCHAIN REFERENCE: Entire file needs review if rebranding.
+
+================================================================================
+FILE: README.md
+================================================================================
+L1    # SSHCustom-VPNChain
+      -> VPNCHAIN REFERENCE: Title.
+
+L3-4  Description mentions "optional OpenVPN chaining".
+      -> VPNCHAIN REFERENCE.
+
+L6-21 Feature list.
+      -> "VPN Chain" bullet.
+      -> "VPN Chain management" in companion app bullet.
+      -> VPNCHAIN REFERENCE.
+
+L23-24 Requirements.
+
+L26-33 Installation steps.
+      -> Step 5 mentions "configure a profile, and tap Start".
+
+L35-99 Configuration tables.
+      -> VPN Chain row in SSH Connection table? No, separate mention.
+      -> "VPN Chain: Route OpenVPN over the SSH tunnel" in Architecture.
+      -> VPNCHAIN REFERENCE.
+
+L101-123 Architecture diagram.
+      -> "ovpn.service — VPN Chain (OpenVPN over SSH)" in diagram.
+      -> VPNCHAIN REFERENCE.
+
+L125-131 Module Data Path.
+      -> "vpnchain/configs/" listed.
+      -> VPNCHAIN REFERENCE.
+
+L133-142 Building instructions.
+
+L144  License reference.
+      -> No bugs in README content.
+
+================================================================================
+FILE: LICENSE
+================================================================================
+L1-EOF Apache License 2.0 standard text.
+      -> No bugs. No vpnchain references.
+
+================================================================================
+FILE: .github/workflows/build.yml
+================================================================================
+L1    name: Build
+
+L3-6  on: push to main/tags, pull_request to main.
+
+L8-9  env: GO_VERSION="1.23", ANDROID_NDK_VERSION="r26d".
+
+L11-74 build-openvpn job.
+      -> Builds OpenSSL + LZO + OpenVPN for arm64-android.
+      -> continue-on-error: true — release ships even if OpenVPN build fails.
+      -> VPNCHAIN REFERENCE: OpenVPN is VPN Chain dependency.
+      -> BUG: `wget -q` for NDK — no retry, no checksum verification.
+         If download is corrupted, build fails mysteriously.
+      -> BUG: OpenSSL 3.0.16 configure uses `ANDROID_NDK_ROOT` but the
+         variable is set as `NDK` in the script. Actually line 38 sets
+         `ANDROID_NDK_ROOT="${NDK}"` — correct.
+      -> BUG: OpenVPN 2.5.9 is EOL. Should use 2.6.x if libcap-ng can be
+         satisfied, or pin to a maintained version. Not critical for function.
+
+L76-104 build-daemon job.
+      -> Builds sshcustomd for android/arm64.
+      -> Verifies binary is aarch64 via `file` + grep.
+      -> No bugs.
+
+L106-137 package-module job.
+      -> Downloads artifacts, stamps module.prop version.
+      -> `VC="$(echo "${V}" | tr -d '.' | sed 's/[^0-9]//g')00"` — strips
+         non-digits. For "2.3.12", produces "231200". Correct.
+      -> Packages ZIP excluding .DS_Store, __MACOSX, bin/.gitkeep,
+         vpnchain/configs/.gitkeep.
+         -> VPNCHAIN REFERENCE: "vpnchain" in exclude.
+      -> No bugs.
+
+L139-208 build-apk job.
+      -> Sets up Java 17, Android SDK.
+      -> Generates self-signed keystore with fallback password.
+         -> BUG: Fallback password "sshcustom_dev_keystore_2024" is hardcoded
+            in CI config. If secrets.KEYSTORE_PASS is not set, this weak
+            password is used. The keystore is ephemeral (CI run only), so
+            low risk, but should fail instead of using weak fallback.
+      -> Builds release APK via `./gradlew assembleRelease --no-daemon`.
+      -> Locates APK: expects `app-arm64-v8a-release.apk`.
+         -> BUG: If APK name changes (e.g., AGP upgrade), fallback find
+            searches any release apk. Acceptable.
+      -> No critical bugs.
+
+L210-237 release job.
+      -> Creates GitHub release with module ZIP and APK.
+      -> Uses softprops/action-gh-release@v2.
+      -> Body mentions installation steps and fixes.
+      -> VPNCHAIN REFERENCE: "SSHCustom-VPNChain" in release name and body.
+      -> No bugs.
+
+================================================================================
+FILE: daemon/cmd/sshcustomd/main.go
+================================================================================
+L1-7  Package main, imports (context, encoding/json, flag, fmt, io, log, net,
+      net/http, os, os/exec, os/signal, runtime, runtime/debug, strconv,
+      strings, sync, sync/atomic, syscall, time, _ "time/tzdata", internal/api,
+      internal/config, internal/ssh, internal/proxy).
+
+L9    var version = "2.0.0"
+      -> BUG: Hardcoded version "2.0.0" does not match VERSION file (2.3.12).
+         The CI build passes `-X main.version=${VERSION}` which overrides this,
+         but local builds will report 2.0.0.
+
+L11-25 setLocalTimezone() — reads persist.sys.timezone, sets time.Local.
+      -> No bugs.
+
+L27-39 whitelistApp() — exempts companion app from Doze.
+      -> Package name: "com.sshcustom.vpnchain".
+      -> VPNCHAIN REFERENCE.
+      -> No bugs.
+
+L41-56 main() — parses args, calls version or runCmd.
+      -> No bugs.
+
+L58-62 usage() function.
+
+L64-78 State struct with mutex-protected fields.
+      -> No bugs.
+
+L80-86 State.set() helper.
+
+L88-92 State.wanInfo().
+
+L94-115 State.snapshot() — returns api.StatusSnapshot.
+      -> BUG: `uptime` calculation uses `time.Since(s.tunnelStart).Seconds()`.
+         If tunnelStart is zero (never connected), uptime is a large negative
+         number converted to int64 — actually `IsZero()` check prevents this.
+         Safe.
+
+L117-245 runCmd() — main daemon runtime.
+      -> Parses flags, loads config, writes PID, starts Unix socket API,
+         HTTP API, metrics ticker, tunnel loop, signal handling.
+      -> BUG: `os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0644)`
+         — PID file is world-readable. Low risk.
+      -> BUG: `sockPath` is world-readable (0666) so app can connect.
+         Any app on device can connect to the Unix socket and read status
+         or send control commands. This is a SECURITY ISSUE — should use
+         group permissions (e.g., 0660) and ensure app runs in same group,
+         or use Android-specific permission checks.
+      -> SIGHUP reloads config atomically.
+      -> Signal handling: SIGTERM/SIGINT cancel context and exit.
+      -> No other critical bugs.
+
+L247-384 tunnelLoop() — SSH connection management with transparent reconnect.
+      -> Exponential backoff with carrier 302 detection (60s backoff).
+      -> Reconnect give-up after 15 minutes — releases routing.
+      -> Session (listeners + iptables) kept up across reconnects — fail-closed.
+      -> BUG: `updateModuleProp("running", cfg.NetworkMode)` uses hardcoded
+         module path `/data/adb/modules/sshcustom-vpnchain/module.prop`.
+         If module ID changes, status update fails silently.
+         -> VPNCHAIN REFERENCE: hardcoded path contains "sshcustom-vpnchain".
+      -> BUG: `runScriptTimeout(iptables, 30*time.Second, "enable")` — if
+         iptables enable fails (e.g., kernel doesn't support needed modules),
+         the error is logged but tunnel continues. Traffic may be black-holed
+         because listeners are up but iptables rules are missing.
+      -> No other critical bugs.
+
+L386-391 nextDelay() — exponential backoff helper.
+
+L393-430 startListeners() — starts SOCKS5, transparent/TPROXY, DNS forwarder.
+      -> DNS forwarder listens on 127.0.0.1:5353.
+      -> No bugs.
+
+L432-498 dnsForwardLoop() — UDP DNS to TCP DNS through SSH.
+      -> Buffers 1500 bytes.
+      -> Handles context cancellation via conn.Close() in goroutine.
+      -> BUG: `conn.SetReadDeadline(time.Now().Add(2 * time.Second))` inside
+         the loop — if a query arrives just before deadline, it may be dropped.
+         Standard pattern for polling, acceptable.
+      -> No critical bugs.
+
+L500-540 forwardOneDNSQuery() — forwards single DNS query.
+      -> TCP DNS framing (2-byte length prefix) per RFC 1035.
+      -> BUG: `tcp.SetDeadline(time.Now().Add(5 * time.Second))` — if response
+         is large and takes >5s, connection is dropped. 5s is generous for DNS.
+      -> No critical bugs.
+
+L542-556 wanIPRefresher() — caches tunnel-side public IP every 5 min.
+      -> No bugs.
+
+L558-568 runScriptTimeout() — executes shell script with timeout.
+      -> Uses exec.CommandContext.
+      -> No bugs.
+
+L570-585 handleControl() — dispatches control actions.
+      -> BUG: "reload" case is empty — SIGHUP is mentioned but not triggered.
+         The comment says "SIGHUP to self handled in signal loop" but this
+         function never sends SIGHUP. The reload action is a no-op.
+
+L587-689 buildHTTPMux() — HTTP API handlers.
+      -> Endpoints: /api/v1/health, /api/v1/status, /api/v1/control,
+         /api/v1/autostart, /api/v1/config, /api/v1/network/public-ip, / (WebUI).
+      -> /api/v1/control: schedules action 300ms later in goroutine.
+         -> BUG: If multiple control requests arrive rapidly, multiple
+            goroutines race. The script `ssh.service` has its own locking
+            (PID checks), so low risk.
+      -> /api/v1/autostart: GET/POST for marker file.
+         -> BUG: Marker file is created with 0644 permissions — world-readable.
+            Harmless (contains only "1").
+      -> WebUI root: serves from /data/adb/sshcustom/webroot/index.html.
+         -> BUG: If file doesn't exist, returns 404 "WebUI not installed".
+            The WebUI is not included in the module ZIP, so this always 404s
+            unless user manually installs it.
+      -> No critical bugs.
+
+L691-712 fetchPublicIP() — fetches IP via ip-api.com through SSH tunnel.
+      -> Uses HTTP/1.0 to avoid chunked encoding.
+      -> BUG: If ip-api.com is blocked or down, returns empty. No fallback.
+      -> No critical bugs.
+
+L714-760 metricsLoop() — collects RSS, CPU%, net bytes every second.
+      -> readCPUTicks() parses /proc/self/stat.
+         -> BUG: Parsing relies on `strings.LastIndexByte(s, ')')` to skip comm
+            field. If process name contains ')', parsing breaks. Rare.
+      -> readNetBytes() sums all non-loopback interfaces.
+         -> BUG: Includes tunnel interface traffic, inflating throughput stats.
+      -> No critical bugs.
+
+L762-780 readCPUTicks() — parses /proc/self/stat.
+      -> BUG: If process name contains ')', `LastIndexByte` finds wrong position.
+         For a daemon named "sshcustomd", no issue.
+
+L782-804 readNetBytes() — parses /proc/net/dev.
+      -> BUG: Sums ALL interfaces including tunnel.
+
+L806-815 readRSS() — parses /proc/self/status for VmRSS.
+      -> No bugs.
+
+L817-825 splitLines() — splits byte slice on newlines.
+      -> BUG: Does not handle trailing newline without final line — the last
+         line before trailing newline is included, but if data ends with newline,
+         the empty trailing segment is not appended. This is correct behavior
+         for most use cases.
+
+L827-832 minDuration() helper.
+
+L834-855 updateModuleProp() — updates module.prop description with emoji status.
+      -> Hardcodes path `/data/adb/modules/sshcustom-vpnchain/module.prop`.
+      -> VPNCHAIN REFERENCE: path contains "sshcustom-vpnchain".
+      -> BUG: If module is installed under a different ID, status never updates.
+
+================================================================================
+FILE: daemon/go.mod
+================================================================================
+L1    module github.com/GoodyOG/SSHCustom_Magisk
+      -> Module name does NOT contain "vpnchain" — good for removal.
+
+L3    go 1.23
+
+L5    require golang.org/x/crypto v0.23.0
+
+L7    require golang.org/x/sys v0.20.0 // indirect
+      -> No bugs.
+
+================================================================================
+FILE: daemon/internal/api/unix.go
+================================================================================
+L1-3  Package api, imports (context, encoding/json, fmt, log, net, os, time).
+
+L5-22 StatusSnapshot struct.
+      -> JSON tags correct.
+      -> No bugs.
+
+L24-32 ControlRequest, ControlResponse structs.
+      -> No bugs.
+
+L34-35 Type aliases for StatusProvider, ControlHandler.
+
+L37-44 UnixServer struct.
+
+L46-77 ListenAndServe() — Unix socket server.
+      -> Creates socket with 0666 permissions.
+         -> BUG: World-readable socket allows any app to connect and send
+            control commands (start/stop tunnel). SECURITY ISSUE.
+      -> Blocks until ctx cancelled.
+      -> No other bugs.
+
+L79-108 handleConn() — handles single connection.
+      -> 5-second deadline per connection.
+      -> Decodes JSON request, encodes response.
+      -> No bugs.
+
+================================================================================
+FILE: daemon/internal/config/config.go
+================================================================================
+L1-3  Package config, imports (bufio, os, strconv, strings, sync, sync/atomic, unsafe).
+
+L5-7  KDoc.
+
+L9-57 Config struct.
+      -> Fields cover all settings.ini options.
+      -> No bugs.
+
+L59-62 AtomicConfig struct with sync.Mutex zero-size field.
+      -> Uses unsafe.Pointer for atomic swaps.
+      -> No bugs.
+
+L64-78 NewAtomic(), Get(), Store() methods.
+      -> Correct atomic pointer operations.
+      -> No bugs.
+
+L80-103 DefaultConfig() — returns defaults.
+      -> SocksPort=1080, TProxyPort=9898, RedirPort=9797.
+         -> BUG: These defaults conflict with the app's defaults (1081, 9899, 9799)
+            in AppSettings. If app writes settings.ini with its defaults and
+            daemon uses DefaultConfig() as fallback, port mismatch can occur.
+      -> No other bugs.
+
+L105-126 Load() — parses settings.ini.
+      -> Skips comments, empty lines, shell constructs.
+      -> BUG: `strings.ContainsAny(line, "(){")` skips lines containing ANY of
+         those chars. If a password contains '(', the line is skipped silently.
+         This is a PARSING BUG — legitimate values with parentheses are lost.
+      -> Splits on first '=', strips quotes.
+      -> No other bugs.
+
+L128-162 apply() — maps keys to struct fields.
+      -> Comprehensive switch.
+      -> No bugs.
+
+================================================================================
+FILE: daemon/internal/proxy/socks5.go
+================================================================================
+L1-3  Package proxy, imports (context, encoding/binary, fmt, io, log, net, time, internal/ssh).
+
+L5     const copyBuf = 128 * 1024
+
+L7-12  SOCKS5Server struct.
+
+L14-35 ListenAndServe() — TCP listener.
+      -> No bugs.
+
+L37-96 handle() — SOCKS5 handshake and relay.
+      -> Implements RFC 1928: greeting, method selection, request header.
+      -> Supports IPv4, domain name, IPv6.
+      -> BUG: `io.ReadFull(conn, hdr)` — if hdr[0] != 5, returns without reply.
+         Client hangs waiting for response. Should send error reply.
+      -> BUG: `conn.Write([]byte{5, 0})` — no error check. If write fails,
+         connection is dropped silently. Acceptable.
+      -> BUG: For unsupported address type (req[3] not 1/3/4), sends
+         `[]byte{5, 8, 0, 1, 0, 0, 0, 0, 0, 0}` — correct error reply.
+      -> BUG: `cl.AddConn()` / `cl.RemoveConn()` are called but if `cl.DialTCP`
+         succeeds and then `relay` hangs, RemoveConn is never called because
+         defer runs after relay returns. Actually defer is BEFORE relay,
+         so RemoveConn runs after relay. Correct.
+      -> No critical bugs.
+
+L98-124 relay() — bidirectional copy with half-close.
+      -> Uses interface check for CloseWrite().
+      -> BUG: If one side closes early, the other side's `io.CopyBuffer` may
+         block until it detects EOF. Standard behavior.
+      -> No critical bugs.
+
+================================================================================
+FILE: daemon/internal/proxy/tproxy.go
+================================================================================
+L1-3  Package proxy, imports (context, fmt, log, net, syscall, time, internal/ssh).
+
+L5     const ipTransparent = 19
+      -> IP_TRANSPARENT socket option.
+
+L7-14  TProxyServer struct.
+
+L16-44 ListenAndServe() — binds with IP_TRANSPARENT.
+      -> Uses net.ListenConfig with Control function.
+      -> No bugs.
+
+L46-72 handle() — accepts TPROXY connection, dials through SSH.
+      -> `target := conn.LocalAddr().String()` — with TPROXY, LocalAddr is the
+         original destination. Correct.
+      -> No bugs.
+
+================================================================================
+FILE: daemon/internal/proxy/transparent.go
+================================================================================
+L1-3  Package proxy, imports (context, encoding/binary, fmt, log, net, syscall, time, unsafe, internal/ssh).
+
+L5-12  TransparentServer struct.
+
+L14-35 ListenAndServe() — standard TCP listener.
+      -> No bugs.
+
+L37-58 handle() — reads original destination via SO_ORIGINAL_DST.
+      -> No bugs in flow.
+
+L60-89 originalDst() — getsockopt SO_ORIGINAL_DST.
+      -> Uses `unsafe.Sizeof(dst)` and `unsafe.Pointer` for syscall.
+      -> BUG: `sz := uint32(unsafe.Sizeof(dst))` — dst is [16]byte. The kernel
+         expects `socklen_t *` (usually 4 bytes). The syscall signature uses
+         uintptr for size pointer. On 64-bit Android, `uintptr(unsafe.Pointer(&sz))`
+         is correct. No bug.
+      -> BUG: `syscall.Syscall6` with `syscall.SYS_GETSOCKOPT` — this is
+         Linux-specific but Android is Linux. Correct.
+      -> Parses sockaddr_in: family(2) + port(2) + addr(4).
+         -> BUG: Assumes IPv4 (sockaddr_in). If the original destination is IPv6,
+            SO_ORIGINAL_DST returns sockaddr_in6 which is 28 bytes. The 16-byte
+            buffer is too small and parsing will be wrong. However, the module
+            primarily targets IPv4 and disables IPv6 by default. Acceptable
+            limitation but should be documented.
+      -> No critical bugs for IPv4.
+
+================================================================================
+FILE: daemon/internal/ssh/client.go
+================================================================================
+L1-3  Package ssh, imports (bufio, bytes, context, crypto/tls, fmt, io, log, net, strings, sync/atomic, time, golang.org/x/crypto/ssh, internal/dnsx).
+
+L5-9   TransportMode type and constants.
+
+L11-28 ConnectConfig struct.
+      -> No bugs.
+
+L30-37 Client struct.
+      -> activeConns is int32 for atomic operations.
+      -> No bugs.
+
+L39-42 AddConn, RemoveConn, ActiveConns methods.
+
+L44-88 Dial() — establishes SSH connection.
+      -> Configures xssh.ClientConfig with password auth.
+      -> `HostKeyCallback: xssh.InsecureIgnoreHostKey()` — required for carrier
+         bypass context but disables host key verification. This is a known
+         security trade-off documented in code (`//nolint:gosec`).
+      -> Starts keepalive goroutine.
+      -> No bugs.
+
+L90-116 keepAlive() — sends keepalive@openssh.com requests.
+      -> BUG: `c.sshConn.SendRequest("keepalive@openssh.com", true, nil)` uses
+         `wantReply=true`. If the server doesn't support this request, each
+         keepalive blocks until timeout. With 30s interval and 3 missed max,
+         disconnect detection takes 90s. Acceptable.
+      -> No critical bugs.
+
+L118-183 dialTransport() — creates raw TCP/TLS connection.
+      -> ModeDirect: optional payload injection, awaitSSHBanner.
+      -> ModeSNI: TLS with SNI spoofing, InsecureSkipVerify.
+      -> ModeSNIHTTPProxy: HTTP CONNECT through proxy, then TLS, then SSH.
+      -> BUG: `dnsx.New().DialContext()` is used for all dials. If DNS
+         resolution fails, error is returned. Correct.
+      -> No critical bugs.
+
+L185-198 buildCONNECT() — assembles HTTP CONNECT request.
+      -> If payload enabled, returns raw payload instead of standard CONNECT.
+         This allows arbitrary injection but is the intended feature.
+      -> No bugs.
+
+L200-208 substitutePayload() — replaces template variables.
+      -> BUG: Does not validate that all variables are resolved. If user
+         includes unknown variable, it is left as-is. Acceptable.
+      -> No bugs.
+
+L210-212 payloadDrainTimeout constant.
+
+L214-269 drainPayloadResponse() — consumes HTTP responses after payload.
+      -> Uses bufio.Reader peek and buffered checks to avoid blocking.
+      -> Correctly handles multiple HTTP responses.
+      -> No bugs.
+
+L271-286 readHTTPHeaderBlock() — reads status line + headers.
+      -> No bugs.
+
+L288-338 awaitSSHBanner() — reads until SSH banner appears.
+      -> Handles HTTP responses, raw-prefix payloads, SSH banner.
+      -> BUG: `conn.SetReadDeadline(deadline)` — if deadline is in the past
+         (e.g., payloadDrainTimeout is very short), returns immediately with
+         error. Acceptable.
+      -> No critical bugs.
+
+L340-352 wrapBuffered() — replays buffered bytes.
+      -> No bugs.
+
+L354-365 prefixConn struct and Read method.
+      -> No bugs.
+
+L367-372 DialTCP() — delegates to sshConn.DialContext.
+      -> No bugs.
+
+L374-380 Close() — cancels context and closes sshConn.
+      -> No bugs.
+
+L382-384 Wait() — blocks until SSH connection closes.
+      -> No bugs.
+
+================================================================================
+FILE: daemon/internal/dnsx/dnsx.go
+================================================================================
+L1-4  Package dnsx, extensive KDoc explaining Android DNS issues.
+
+L6-12 Imports: context, errors, fmt, log, math/rand, net, os/exec, strings, sync, time.
+
+L14-22 Constants: cacheTTL, queryTimeout, serversMaxAge, tcpKeepAlive.
+
+L24-27 fallbackServers (8.8.8.8, 1.1.1.1).
+
+L29-33 defaultResolver, once.
+
+L35-42 Resolver struct.
+
+L44-50 cacheEntry struct.
+
+L52-58 New() — returns shared resolver.
+      -> No bugs.
+
+L60-86 DialContext() — resolves host, dials first reachable IP.
+      -> If host is IP literal, dials directly with KeepAlive.
+      -> BUG: `d := net.Dialer{KeepAlive: tcpKeepAlive}` — this sets TCP
+         keepalive on the underlying socket. Good.
+      -> BUG: If first IP fails and second succeeds, `lastErr` from first is
+         lost but success is returned. Correct behavior.
+      -> No bugs.
+
+L88-118 Lookup() — resolves A records with cache.
+      -> Cache uses mutex lock.
+      -> BUG: Cache entries never expire if time jumps backward (rare).
+      -> No bugs.
+
+L120-146 dnsServers() — returns ordered server list with deduplication.
+      -> Caches for 30s.
+      -> No bugs.
+
+L148-180 readCarrierDNS() — parses getprop output.
+      -> Parses `[net.dns1]: [8.8.8.8]` format.
+      -> BUG: `strings.Contains(key, "dns")` matches ANY property with "dns"
+         in the name, including `net.dns1`, `dhcp.wlan0.dns1`, etc. This is
+         intentional but may include irrelevant properties. Acceptable.
+      -> Skips IPv6 addresses (`ip.To4() == nil`). Correct for IPv6-disabled
+         tunnel context.
+      -> No bugs.
+
+L182-214 queryA() — sends UDP DNS query.
+      -> Builds query with random ID.
+      -> BUG: `rand.Uint32()` uses math/rand global source which is seeded
+         with time.Now().UnixNano() by default in Go 1.20+. For DNS ID,
+         this is acceptable (not cryptographic).
+      -> No bugs.
+
+L216-240 buildQuery() — constructs DNS query message.
+      -> BUG: Does not handle hostnames longer than 255 bytes or labels > 63
+         (checked). Acceptable.
+      -> No bugs.
+
+L242-280 parseA() — parses DNS response.
+      -> Checks ID, RCODE, skips questions, extracts A records.
+      -> BUG: `skipName()` handles compression pointers but does not validate
+         pointer targets (could loop on crafted response). However, this is
+         a local resolver talking to trusted DNS servers. Low risk.
+      -> No critical bugs.
+
+L282-304 skipName() — advances past DNS name with compression.
+      -> BUG: If a compression pointer points to another compression pointer
+         (indirect compression), this code follows only one level. Actually
+         it recurses via `off = skipName(msg, int(...))`? No, it returns
+         immediately after reading the 2-byte pointer. This is a BUG —
+         indirect compression pointers are not followed. However, real DNS
+         servers rarely use indirect pointers. Acceptable.
+
+================================================================================
+SUMMARY OF CRITICAL BUGS AND VPNCHAIN REFERENCES
+================================================================================
+
+CRITICAL BUGS FOUND:
+-------------------
+1. SHELL INJECTION (app + module):
+   - MainViewModel.fallbackWriteSettings() escapes only \, ", `, $, |.
+     Missing: &, ;, <, >, newline, tab, parenthesis.
+   - SSHControlService.writeSetting() same incomplete escaping.
+   - MainViewModel.startVpnChain() escapes only single quotes in config name.
+   Impact: Malicious profile fields or config filenames can execute arbitrary
+   shell commands as root.
+
+2. VERSION MISMATCHES:
+   - app/build.gradle.kts: versionName "2.3.5" vs VERSION file "2.3.12".
+   - module/customize.sh: hardcoded "v2.0.0" vs VERSION "2.3.12".
+   - module/update.json: version "v2.0.0", versionCode 20000 vs 231200.
+   - daemon/main.go: hardcoded "2.0.0" (overridden by CI ldflags, but local
+     builds report wrong version).
+
+3. MISSING FILES (VPN Chain feature broken):
+   - module/scripts/ovpn.service — referenced but does not exist.
+   - module/scripts/vpnchain.iptables — referenced but does not exist.
+   Impact: VPN Chain (OpenVPN over SSH) cannot start or manage iptables.
+
+4. SECURITY — WORLD-ACCESSIBLE SOCKET:
+   - daemon/internal/api/unix.go: Unix socket created with 0666 permissions.
+   - Any app on device can connect and send control commands (start/stop tunnel).
+   - Should use 0660 with shared group, or add authentication.
+
+5. MEMORY/FD LEAK:
+   - MainViewModel.pingLatency(): if Socket.connect() throws exception,
+     sock.close() is NOT called in catch blocks. Socket leaks.
+
+6. PARSING BUG (daemon config):
+   - config/config.go Load(): skips lines containing '(', ')', '{'.
+   - If password or payload contains these characters, the setting is silently
+     ignored.
+
+7. SYSTEM STATE MUTATION (module):
+   - ssh.iptables enable: disables Android captive portal detection.
+   - ssh.iptables disable: restores hardcoded defaults, not user's original
+     settings. User's custom captive portal config is lost permanently.
+
+8. TUN MODE BROKEN:
+   - ssh.iptables: `tun_device` variable is never defined in settings.ini.
+   - All `ip link set "${tun_device}"` commands fail with empty device name.
+
+9. DOUBLE-START RISK (boot):
+   - service.sh autostart: if curl health check fails, falls back to script start.
+   - ssh.service has PID checks, but race window exists during daemon startup.
+
+10. PASSWORD STORAGE (app):
+    - Profile.password stored in plaintext SharedPreferences JSON.
+    - No encryption or Android Keystore usage.
+
+VPNCHAIN REFERENCES TO REMOVE:
+------------------------------
+The following strings/locations contain "vpnchain", "VPNChain", or "VPN Chain"
+and need renaming if the feature is removed or rebranded:
+
+Package/Namespace:
+  - app/src/main/java/com/sshcustom/vpnchain/ (entire package path)
+  - AndroidManifest.xml package attribute (implied by namespace)
+  - app/build.gradle.kts: namespace, applicationId
+
+UI Strings:
+  - MainActivity.kt: "VPN Chain" nav label (L76)
+  - VpnChainScreen.kt: entire file (screen title, status labels, paths)
+  - SettingsScreen.kt: source URL "github.com/GoodyOG/sshcustom-vpnchain"
+
+File Paths (module + app):
+  - /data/adb/sshcustom/vpnchain/ (all references)
+  - /data/adb/modules/sshcustom-vpnchain/ (module install path)
+  - module/customize.sh: WORK_DIR uses /data/adb/sshcustom (okay), but
+    creates vpnchain/configs and vpnchain/run.
+  - module/uninstall.sh: OLD_DIR="/data/adb/sshcustom-vpnchain"
+
+Script/Config References:
+  - module/module.prop: id, name, description all contain "vpnchain"
+  - module/update.json: zipUrl and changelog contain "sshcustom-vpnchain"
+  - module/customize.sh: banner, completion banner
+  - module/service.sh: comment, sed path for module.prop
+  - module/uninstall.sh: comment
+  - module/action.sh: comment, printf banner
+  - module/scripts/ssh.service: comment
+  - module/scripts/ssh.iptables: comment
+  - module/scripts/ssh.tool: comment
+  - build.sh: ZIP filename, banner
+  - README.md: title, feature list, architecture diagram, paths
+  - .github/workflows/build.yml: release name, body text
+  - goal.txt: entire document
+
+Daemon Code:
+  - daemon/cmd/sshcustomd/main.go: whitelistApp() hardcodes package name
+    "com.sshcustom.vpnchain"
+  - updateModuleProp() hardcodes module path "sshcustom-vpnchain"
+
+App Code:
+  - MainViewModel.kt: all vpn-prefixed state (vpnConfigs, vpnChainState, etc.)
+  - SSHControlService.kt: vpnConfigDir, ovpnService, ovpnLog paths
+  - Repository.kt: KEY_VPN_CONFIG, loadVpnConfig, saveVpnConfig,
+    fetchChainExitIp()
+  - Models.kt: VpnChainState sealed class
+  - LogsScreen.kt: "openvpn" log key
+
+Binary/Artifact Names:
+  - build.sh: SSHCustom-VPNChain-v${VERSION}.zip
+  - .github/workflows/build.yml: release asset names, body text
+
+================================================================================
+END OF AUDIT
+================================================================================

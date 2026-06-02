@@ -1,4 +1,4 @@
-SSHCustom-VPNChain — Complete Rebuild Prompt for Kiro
+SSHCustom — Complete Rebuild Prompt for Kiro
 Overview
 You are rebuilding the GoodyOG/sshcustom-vpnchain repository completely from scratch. This is a Magisk/KernelSU/APatch module that provides SSH tunneling as a system-wide transparent proxy on rooted Android devices, plus a native Android companion app to manage it. No VpnService is used — everything runs at the kernel/iptables level via root.
 Before writing a single line of code, read and understand the existing codebase thoroughly. Then delete everything except the v1.0.1 release tag and build fresh.
@@ -37,7 +37,6 @@ How the SSH connection is established and maintained
 How SOCKS5 dynamic port forwarding works in the daemon
 How the transparent proxy intercepts traffic
 How iptables rules are applied and cleaned up
-How the VPN chain (OpenVPN over SSH) was architectured — document this thoroughly in a file called docs/vpnchain-future.md — this will be implemented in a future version, not now
 How the WebUI communicates with the daemon (API endpoints, data structures)
 The payload injection mechanism
 
@@ -48,7 +47,6 @@ Delete all existing source files and directories. Keep only:
 
 The .git/ directory (preserve git history)
 The v1.0.1 release tag
-docs/vpnchain-future.md (created in Step 1)
 docs/architecture-analysis.md (created in Step 1)
 LICENSE
 
@@ -85,17 +83,14 @@ sshcustom-vpnchain/
 │   │   └── res/
 │   ├── build.gradle.kts
 │   └── AndroidManifest.xml
-├── third_party/
-│   └── tun2proxy/             # tun2proxy arm64 binary (added by CI)
 ├── .github/
 │   └── workflows/
-│       ├── build.yml          # Main build: Go daemon + tun2proxy + module zip + APK
+│       ├── build.yml          # Main build: Go daemon + module zip + APK
 │       └── release.yml        # Release packaging
 ├── .kiro/
 │   ├── steering/
 │   └── skills/
 ├── docs/
-│   ├── vpnchain-future.md
 │   └── architecture-analysis.md
 ├── build.sh                   # Local build script
 ├── go.mod                     # Root go.mod (workspace)
@@ -544,16 +539,6 @@ Step 7 — Build System (GitHub Actions)
 .github/workflows/build.yml
 This workflow must:
 
-Build tun2proxy arm64 binary:
-
-yaml- name: Build tun2proxy for Android arm64
-  run: |
-    git clone https://github.com/tun2proxy/tun2proxy.git
-    cd tun2proxy
-    cargo build --release --target aarch64-linux-android
-    cp target/aarch64-linux-android/release/tun2proxy-bin ../third_party/tun2proxy/tun2proxy
-Set up Android NDK toolchain for Rust cross-compilation.
-
 Build Go daemon for arm64 Android:
 
 yaml- name: Build sshcustomd
@@ -572,7 +557,6 @@ Package module zip:
 
 yaml- name: Package Magisk module
   run: |
-    cp third_party/tun2proxy/tun2proxy module/bin/tun2proxy
     cd module
     zip -r ../sshcustom-vpnchain-${{ github.ref_name }}.zip . \
       -x "*.DS_Store" -x "__MACOSX/*"
@@ -587,7 +571,7 @@ yaml- name: Build APK
 Trigger on: push to main, pull requests, and version tags (v*).
 
 build.sh — Local Build Script
-For local development — builds daemon for arm64, packages module zip, skips APK (Gradle handles that separately). Documents how to set up Android NDK for local tun2proxy compilation.
+For local development — builds daemon for arm64, packages module zip, skips APK (Gradle handles that separately).
 
 Step 8 — Module Installation (customize.sh)
 sh#!/system/bin/sh
@@ -611,24 +595,10 @@ if [ ! -f /data/adb/sshcustom/settings.ini ]; then
   cp "$MODPATH/settings.ini" /data/adb/sshcustom/settings.ini
 fi
 
-ui_print "SSHCustom-VPNChain installed"
+ui_print "SSHCustom installed"
 ui_print "Open the companion app to configure"
 
-Step 9 — VPN Chain Future Documentation
-In docs/vpnchain-future.md, document based on your reading of the v1.0.1 source:
-
-The complete VPN chain architecture (OpenVPN over SSH)
-The iptables routing strategy used
-The vpnchain.sh script logic
-The tun0 → SOCKS5 → SSH flow
-What needs to be added to settings.ini for VPN chain support
-What changes ssh.iptables needs to support VPN chain mode
-The vpnchain start/stop/switch/status command interface to preserve
-Authentication file structure
-
-This document is the handoff for future implementation — must be comprehensive enough that any developer can implement VPN chain from it alone.
-
-Step 10 — README
+Step 9 — README
 Write a clean README.md covering:
 
 What the module does
@@ -641,7 +611,6 @@ Speed boost explanation
 QUIC toggle explanation
 Stop behavior (clean state for other VPN apps)
 App screenshots placeholder
-VPN Chain: "Coming soon"
 
 
 Critical Requirements Summary
@@ -667,11 +636,11 @@ Do these in strict order, get confirmation at each milestone before proceeding:
 ✅ Wipe repo, create directory structure
 ✅ Write settings.ini template and all module shell scripts
 ✅ Write and test Go daemon (daemon compiles cleanly for arm64)
-✅ Write GitHub Actions build workflow (tun2proxy + daemon + module zip)
+✅ Write GitHub Actions build workflow (daemon + module zip)
 ✅ Verify module installs and starts/stops cleanly (test iptables logic)
 ✅ Build Android app (all 4 screens)
 ✅ Integration test: app controls module via libsu
-✅ Write README and vpnchain-future.md
+✅ Write README
 ✅ Push everything, create v2.0.0-alpha release
 
-At each ✅ checkpoint: commit what you have, push to main, report status.
+At each ✅ checkpoint: commit what you have, push to main, report status.

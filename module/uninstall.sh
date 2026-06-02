@@ -7,23 +7,17 @@
 MODDIR="${0%/*}"
 WORK_DIR="/data/adb/sshcustom"
 SERVICE="${WORK_DIR}/scripts/ssh.service"
-OVPN_SERVICE="${WORK_DIR}/scripts/ovpn.service"
 IPTABLES="${WORK_DIR}/scripts/ssh.iptables"
-VPNCHAIN_IPT="${WORK_DIR}/scripts/vpnchain.iptables"
 
-# Stop VPN Chain if running
-[ -x "${OVPN_SERVICE}" ] && sh "${OVPN_SERVICE}" stop >/dev/null 2>&1 || true
 
 # Stop SSH tunnel + daemon
 [ -x "${SERVICE}" ] && sh "${SERVICE}" stop >/dev/null 2>&1 || true
 
 # Clean iptables (in case stop didn't fully clear)
 [ -x "${IPTABLES}" ] && sh "${IPTABLES}" disable >/dev/null 2>&1 || true
-[ -x "${VPNCHAIN_IPT}" ] && sh "${VPNCHAIN_IPT}" disable >/dev/null 2>&1 || true
 
-# Kill any remaining daemon/openvpn processes
+# Kill any remaining daemon processes
 killall sshcustomd 2>/dev/null || true
-killall openvpn 2>/dev/null || true
 
 # Restore IPv6 (in case it was disabled)
 sysctl -w net.ipv6.conf.all.disable_ipv6=0 >/dev/null 2>&1 || true

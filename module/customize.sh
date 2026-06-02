@@ -38,8 +38,6 @@ ui_print "  Creating data directories..."
 mkdir -p "${WORK_DIR}/run/state"
 mkdir -p "${WORK_DIR}/bin"
 mkdir -p "${WORK_DIR}/scripts"
-mkdir -p "${WORK_DIR}/vpnchain/configs"
-mkdir -p "${WORK_DIR}/vpnchain/run"
 chmod 700 "${WORK_DIR}"
 
 # ── Install binaries ──────────────────────────────────────────────────────────
@@ -57,8 +55,6 @@ _install_bin() {
 }
 
 _install_bin sshcustomd
-_install_bin tun2proxy
-_install_bin openvpn
 
 # ── Install scripts ───────────────────────────────────────────────────────────
 ui_print "  Installing scripts..."
@@ -77,8 +73,6 @@ _install_script() {
 _install_script ssh.service  || abort "Failed to install ssh.service"
 _install_script ssh.iptables || abort "Failed to install ssh.iptables"
 _install_script ssh.tool     || abort "Failed to install ssh.tool"
-_install_script ovpn.service || ui_print "  WARN: ovpn.service not installed (VPN Chain)"
-_install_script vpnchain.iptables || ui_print "  WARN: vpnchain.iptables not installed"
 
 # ── Install settings.ini (preserve existing user config) ─────────────────────
 if [ ! -f "${WORK_DIR}/settings.ini" ]; then
@@ -94,11 +88,6 @@ else
 fi
 
 # ── VPN Chain: auth template (create if missing or still template) ────────────
-if [ ! -f "${WORK_DIR}/vpnchain/auth.txt" ] || grep -q "^username$" "${WORK_DIR}/vpnchain/auth.txt" 2>/dev/null; then
-  printf 'username\npassword\n' > "${WORK_DIR}/vpnchain/auth.txt"
-  chmod 600 "${WORK_DIR}/vpnchain/auth.txt"
-  ui_print "  VPN Chain: edit vpnchain/auth.txt with your OpenVPN credentials"
-fi
 
 # ── Migration from old path ───────────────────────────────────────────────────
 OLD_DIR="/data/adb/sshcustom-vpnchain"
@@ -106,8 +95,6 @@ if [ -d "${OLD_DIR}" ] && [ "${OLD_DIR}" != "${WORK_DIR}" ]; then
   ui_print "  Migrating config from old path..."
   [ -f "${OLD_DIR}/settings.ini" ] && [ ! -f "${WORK_DIR}/settings.ini" ] && \
     cp "${OLD_DIR}/settings.ini" "${WORK_DIR}/settings.ini"
-  [ -d "${OLD_DIR}/vpnchain/configs" ] && \
-    cp -rn "${OLD_DIR}/vpnchain/configs/." "${WORK_DIR}/vpnchain/configs/" 2>/dev/null || true
 fi
 
 # ── Verify critical files installed ──────────────────────────────────────────

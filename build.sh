@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build.sh — Local build script for SSHCustom-VPNChain
+# build.sh — Local build script for SSHCustom
 # Builds daemon for arm64-android, packages Magisk ZIP.
 # Run from repo root.
 set -Eeuo pipefail
@@ -9,10 +9,10 @@ VERSION="$(cat "$ROOT/VERSION" | tr -d '[:space:]')"
 DIST="$ROOT/dist"
 DAEMON_DIR="$ROOT/daemon"
 MODULE_DIR="$ROOT/module"
-ZIP_OUT="$DIST/SSHCustom-VPNChain-v${VERSION}.zip"
+ZIP_OUT="$DIST/SSHCustom-v${VERSION}.zip"
 LDFLAGS="-s -w -buildid= -X main.version=${VERSION}"
 
-echo "==> Building SSHCustom-VPNChain v${VERSION}"
+echo "==> Building SSHCustom v${VERSION}"
 
 mkdir -p "$DIST" "$MODULE_DIR/bin"
 
@@ -39,19 +39,11 @@ echo "==> Building sshcustomd for android/arm64"
 )
 echo "   sshcustomd: $(ls -lh "$MODULE_DIR/bin/sshcustomd" | awk '{print $5}')"
 
-echo "==> Checking tun2proxy binary"
-if [ -f "$MODULE_DIR/bin/tun2proxy" ]; then
-  echo "   tun2proxy: $(ls -lh "$MODULE_DIR/bin/tun2proxy" | awk '{print $5}')"
-else
-  echo "   WARN: module/bin/tun2proxy not found — CI builds it from source"
-  echo "   For local builds, obtain a static arm64 tun2proxy binary and place it at module/bin/tun2proxy"
-fi
-
 echo "==> Packaging Magisk ZIP → $ZIP_OUT"
 (
   cd "$MODULE_DIR"
   zip -r9 "$ZIP_OUT" . \
-    -x "*.DS_Store" -x "__MACOSX/*" -x "bin/.gitkeep" -x "vpnchain/configs/.gitkeep"
+    -x "*.DS_Store" -x "__MACOSX/*" -x "bin/.gitkeep"
 )
 
 echo ""

@@ -22,32 +22,6 @@ class SSHControlService : RootService() {
         private val serviceScript = "/data/adb/sshcustom/scripts/ssh.service"
         private val iptablesScript = "/data/adb/sshcustom/scripts/ssh.iptables"
         private val logFile = "/data/adb/sshcustom/run/sshcustom.log"
-        private val ovpnService = "/data/adb/sshcustom/scripts/ovpn.service"
-        private val ovpnLog = "/data/adb/sshcustom/run/openvpn.log"
-        private val vpnConfigDir = "/data/adb/sshcustom/vpnchain/configs"
-
-        // ── VPN Chain (OpenVPN over SSHCustom) ────────────────────────────────
-        /** List available .ovpn config filenames in the configs directory. */
-        fun listVpnConfigs(): List<String> {
-            val r = Shell.cmd("ls -1 '$vpnConfigDir' 2>/dev/null").exec()
-            return r.out.map { it.trim() }.filter { it.endsWith(".ovpn", ignoreCase = true) }
-        }
-
-        fun startVpnChain(config: String): String {
-            val safe = config.replace("'", "'\\''")
-            return shell("sh $ovpnService start '$safe' &")
-        }
-
-        fun stopVpnChain(): String = shell("sh $ovpnService stop")
-
-        /** Returns "connected" | "connecting" | "stopped". */
-        fun vpnChainStatus(): String {
-            val r = Shell.cmd("sh $ovpnService status").exec()
-            return r.out.firstOrNull()?.trim() ?: "stopped"
-        }
-
-        fun readOvpnLog(lines: Int = 200): String = readLogFile(ovpnLog, lines)
-
         // ── Tunnel control ────────────────────────────────────────────────────
         fun startTunnel(): String  = shell("sh $serviceScript start")
         fun stopTunnel(): String   = shell("sh $serviceScript stop")

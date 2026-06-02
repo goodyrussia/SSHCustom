@@ -135,7 +135,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         "core"    to "/data/adb/sshcustom/run/sshcustom.log",
         "boot"    to "/data/adb/sshcustom/run/boot.log",
         "tool"    to "/data/adb/sshcustom/run/tool.log",
-        "openvpn" to "/data/adb/sshcustom/run/openvpn.log",
     )
 
     fun switchLog(type: String) {
@@ -162,29 +161,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var settingsNeedRestart = false
         private set
 
-    // ── VPN Chain (OpenVPN over SSHCustom) ────────────────────────────────────
-    private val _vpnConfigs = MutableStateFlow<List<String>>(emptyList())
-    val vpnConfigs: StateFlow<List<String>> = _vpnConfigs
-
-    private val _selectedVpnConfig = MutableStateFlow("")
-    val selectedVpnConfig: StateFlow<String> = _selectedVpnConfig
-
-    private val _vpnChainState = MutableStateFlow<VpnChainState>(VpnChainState.Stopped)
-    val vpnChainState: StateFlow<VpnChainState> = _vpnChainState
-
-    private val _chainExitIp = MutableStateFlow("—")
-    val chainExitIp: StateFlow<String> = _chainExitIp
-
-    private val _vpnBusy = MutableStateFlow(false)
-    val vpnBusy: StateFlow<Boolean> = _vpnBusy
-
     // ── Init ──────────────────────────────────────────────────────────────────
     init {
         checkRoot()
         loadPersistedData()
         bindRootService()
         startLogPolling()
-        startVpnPolling()
     }
 
     private fun checkRoot() = viewModelScope.launch(Dispatchers.IO) {
@@ -216,7 +198,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _profiles.value       = repo.loadProfiles()
         _activeProfileId.value = repo.loadActiveProfileId()
         _settings.value       = repo.loadSettings()
-        _selectedVpnConfig.value = repo.loadVpnConfig()
     }
 
     private fun bindRootService() {
@@ -336,84 +317,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refreshLog() = viewModelScope.launch { refreshLogInternal() }
-
-    // ── VPN Chain control ─────────────────────────────────────────────────────
-
-    fun refreshVpnConfigs() = viewModelScope.launch(Dispatchers.IO) {
-        val list = try { rootBinder?.listVpnConfigs() } catch (_: Exception) { null }
-            ?: try {
-                // Fallback when rootBinder is null: use Shell.cmd to list configs
-                val r = Shell.cmd("ls -1 /data/adb/sshcustom/vpnchain/configs/ 2>/dev/null").exec()
-                r.out.filter { it.endsWith(".ovpn") }
-            } catch (_: Exception) { emptyList() }
-        _vpnConfigs.value = list
-        if (_selectedVpnConfig.value.isBlank() && list.isNotEmpty()) {
-            _selectedVpnConfig.value = list.first()
-            repo.saveVpnConfig(list.first())
-        }
-    }
-
-    fun selectVpnConfig(name: String) {
-        _selectedVpnConfig.value = name
-        repo.saveVpnConfig(name)
-    }
-
-    fun startVpnChain() = viewModelScope.launch {
-        if (!status.value.connected) {
-            _vpnChainState.value = VpnChainState.Error("Connect SSHCustom first")
-            return@launch
-        }
-        val cfg = _selectedVpnConfig.value
-        if (cfg.isBlank()) {
-            _vpnChainState.value = VpnChainState.Error("Select a config first")
-            return@launch
-        }
-        _vpnBusy.value = true
-        _vpnChainState.value = VpnChainState.Connecting
-        withContext(Dispatchers.IO) {
-            try {
-                val safeCfg = cfg.replace("'", "'\\''")
-                rootBinder?.startVpnChain(cfg)
-                    ?: Shell.cmd("sh /data/adb/sshcustom/scripts/ovpn.service start '$safeCfg' &").exec()
-            } catch (_: Exception) {}
-        }
-        _vpnBusy.value = false
-    }
-
-    fun stopVpnChain() = viewModelScope.launch {
-        _vpnBusy.value = true
-        withContext(Dispatchers.IO) {
-            try {
-                rootBinder?.stopVpnChain()
-                    ?: Shell.cmd("sh /data/adb/sshcustom/scripts/ovpn.service stop").exec()
-            } catch (_: Exception) {}
-        }
-        _vpnBusy.value = false
-    }
-
-    private fun startVpnPolling() {
-        viewModelScope.launch {
-            delay(1_000) // give the binder time to connect before first refresh
-            refreshVpnConfigs()
-            while (isActive) {
-                withContext(Dispatchers.IO) {
-                    val st = try { rootBinder?.vpnChainStatus() } catch (_: Exception) { null } ?: "stopped"
-                    val newState: VpnChainState = when (st) {
-                        "connected"  -> VpnChainState.Connected
-                        "connecting" -> VpnChainState.Connecting
-                        else -> if (_vpnBusy.value) _vpnChainState.value else VpnChainState.Stopped
-                    }
-                    _vpnChainState.value = newState
-                    if (newState is VpnChainState.Connected) {
-                        if (_chainExitIp.value == "—") _chainExitIp.value = repo.fetchChainExitIp()
-                    } else {
-                        _chainExitIp.value = "—"
-                    }
-                }
-                delay(2_000)
-            }
-        }
-    }
 
     // ── Profiles — full CRUD with persistence ─────────────────────────────────
 

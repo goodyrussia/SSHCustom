@@ -1,0 +1,394 @@
+═══════════════════════════════════════════════════════════════════════════════
+  SSHCustom-VPNChain v2.3.12 — Module Install / Build Audit (cmd-4-kimi)
+  Branch: main  |  Date: 2026-06-02
+═══════════════════════════════════════════════════════════════════════════════
+
+AUDIT SCOPE
+-----------
+Files examined:
+  • module/customize.sh      (Magisk/KSU/APatch installer)
+  • module/service.sh          (boot-time daemon launcher)
+  • module/uninstall.sh        (clean removal)
+  • build.sh                   (local build / ZIP packaging)
+  • module/scripts/ovpn.service      (VPN Chain OpenVPN lifecycle)
+  • module/scripts/vpnchain.iptables (VPN Chain routing rules)
+
+Supporting context:
+  • module/settings.ini        (runtime configuration)
+  • module/module.prop         (module metadata)
+  • module/action.sh           (KSU/APatch action button)
+
+═══════════════════════════════════════════════════════════════════════════════
+1. customize.sh  — INSTALLATION SCRIPT
+═══════════════════════════════════════════════════════════════════════════════
+
+[ ARCHITECTURE CHECK ]
+  → Only arm64-v8a is supported; aborts immediately on other ABIs.
+  ✓ Good: prevents broken installs on 32-bit or x86 devices.
+
+[ EXTRACTION & PERMISSIONS ]
+  → Uses unzip -o "${ZIPFILE}" -d "${MODPATH}" (silent, overwrite).
+  → set_perm_recursive for scripts/ and bin/ (0755).
+  → set_perm for service.sh, action.sh, customize.sh (0755).
+  → set_perm for settings.ini, module.prop (0644).
+  ✓ Permissions are appropriate for executable scripts vs config files.
+
+[ DATA DIRECTORY CREATION ]
+  WORK_DIR="/data/adb/sshcustom"
+  Creates:
+    • ${WORK_DIR}/run/state
+    • ${WORK_DIR}/bin
+    • ${WORK_DIR}/scripts
+    • ${WORK_DIR}/vpnchain/configs
+    • ${WORK_DIR}/vpnchain/run
+  chmod 700 on WORK_DIR.
+  ✓ Restrictive permissions on sensitive data directory.
+
+[ BINARY INSTALLATION ]
+  _install_bin() copies from MODPATH/bin/ to WORK_DIR/bin/.
+  Expected binaries:
+    • sshcustomd   (daemon — CRITICAL)
+    • tun2proxy    (transparent proxy helper)
+    • openvpn      (VPN Chain client)
+  ⚠ WARN: If binary missing, only warns (does not abort for tun2proxy/openvpn).
+    However, sshcustomd absence is silently logged but NOT verified later.
+    The _verify() block only checks WORK_DIR files, not MODPATH/bin sources.
+
+[ SCRIPT INSTALLATION ]
+  _install_script() copies from MODPATH/scripts/ to WORK_DIR/scripts/.
+  Mandatory scripts (abort on failure):
+    • ssh.service
+    • ssh.iptables
+    • ssh.tool
+  Optional scripts (warn only):
+    • ovpn.service
+    • vpnchain.iptables
+  ✓ Correctly distinguishes core vs optional components.
+
+[ SETTINGS.INI HANDLING ]
+  → Preserves existing user config if present.
+  → Installs default only on first install.
+  ✓ Good UX: prevents overwriting user settings on upgrade.
+  ⚠ NOTE: Comment says "Future: diff-merge new keys" — currently not implemented.
+    New settings keys in updated module.prop won't appear in old settings.ini.
+
+[ VPN CHAIN AUTH TEMPLATE ]
+  → Creates /data/adb/sshcustom/vpnchain/auth.txt with placeholder
+    username/password if missing or still template.
+  chmod 600 on auth file.
+  ✓ Proper credential file permissions.
+
+[ MIGRATION LOGIC ]
+  → Detects old path /data/adb/sshcustom-vpnchain and migrates:
+    • settings.ini (if new one doesn't exist)
+    • vpnchain/configs/ (recursive, non-destructive cp -rn)
+  ✓ Clean upgrade path for users coming from older versions.
+
+[ VERIFICATION ]
+  _verify() checks existence of:
+    • ${WORK_DIR}/bin/sshcustomd
+    • ${WORK_DIR}/scripts/ssh.service
+    • ${WORK_DIR}/scripts/ssh.iptables
+    • ${WORK_DIR}/scripts/ssh.tool
+    • ${WORK_DIR}/settings.ini
+  ⚠ MISSING: tun2proxy and openvpn are NOT in the verification list.
+    If ZIP is incomplete, install succeeds but VPN Chain / transparent proxy
+    features will fail at runtime.
+
+[ OVERALL customize.sh RATING ]
+  ✓ Well-structured, good error handling on mandatory components.
+  ⚠ Minor: optional binary verification gap.
+  ⚠ Minor: settings.ini key migration not implemented.
+
+═══════════════════════════════════════════════════════════════════════════════
+2. service.sh  — BOOT SERVICE
+═══════════════════════════════════════════════════════════════════════════════
+
+[ BOOT WAIT ]
+  → Polls sys.boot_completed for up to 5 minutes (100 × 3s sleep).
+  → Logs actual wait time.
+  ✓ Prevents premature service start before Android userspace is ready.
+
+[ IDLE DAEMON START ]
+  → Always starts sshcustomd in idle mode (WebUI/API accessible).
+  → Updates module.prop description to [ 💤 ] idle state.
+  ✓ Good: ensures API is available even if tunnel isn't auto-started.
+
+[ AUTOSTART LOGIC ]
+  → Checks for autostart marker: ${RUN_DIR}/autostart
+  → If present:
+      1. Waits for default route (ip route get 1.1.1.1) up to 60s.
+      2. Waits for daemon API health (curl 127.0.0.1:9190/api/v1/health)
+         up to 10s.
+      3. Starts tunnel via API POST /api/v1/control {action:start}.
+      4. Falls back to direct script execution if curl unavailable.
+  ✓ Robust connectivity and API readiness checks.
+  ✓ Graceful fallback to script-based start.
+
+[ LOGGING ]
+  → All output appended to ${RUN_DIR}/boot.log with timestamps.
+  ✓ Persistent boot diagnostics for troubleshooting.
+
+[ OVERALL service.sh RATING ]
+  ✓ Excellent boot-time robustness.
+  ✓ Clean separation between daemon idle state and tunnel active state.
+
+═══════════════════════════════════════════════════════════════════════════════
+3. uninstall.sh  — CLEAN REMOVAL
+═══════════════════════════════════════════════════════════════════════════════
+
+[ SERVICE STOPPING ]
+  → Stops ovpn.service (VPN Chain) first.
+  → Stops ssh.service (SSH tunnel + daemon).
+  ✓ Correct order: VPN Chain depends on SSH tunnel.
+
+[ IPTABLES CLEANUP ]
+  → Disables ssh.iptables rules.
+  → Disables vpnchain.iptables rules.
+  ✓ Ensures no stale firewall rules remain after removal.
+
+[ PROCESS TERMINATION ]
+  → killall sshcustomd
+  → killall openvpn
+  ✓ Aggressive cleanup of background processes.
+
+[ IPv6 RESTORATION ]
+  → Re-enables IPv6 system-wide:
+    sysctl -w net.ipv6.conf.all.disable_ipv6=0
+    sysctl -w net.ipv6.conf.default.disable_ipv6=0
+  ✓ Good: restores system state changed by the module.
+
+[ DATA REMOVAL ]
+  → rm -rf "${WORK_DIR}" (/data/adb/sshcustom)
+  ✓ Complete removal of all module data, configs, logs, credentials.
+
+[ BATTERY OPTIMIZATION ]
+  → Removes companion app from deviceidle whitelist.
+  ✓ Clean companion app state.
+
+[ OVERALL uninstall.sh RATING ]
+  ✓ Comprehensive, correct stop order, restores system state.
+  ✓ No leftover artifacts.
+
+═══════════════════════════════════════════════════════════════════════════════
+4. build.sh  — LOCAL BUILD / PACKAGING
+═══════════════════════════════════════════════════════════════════════════════
+
+[ VERSION HANDLING ]
+  → Reads VERSION file, strips whitespace.
+  → Stamps module.prop:
+      version=v${VERSION}
+      versionCode=$(echo "$VERSION" | tr -d '.')00
+  Example: 2.3.12 → versionCode=2031200
+  ⚠ NOTE: versionCode calculation assumes single-digit segments.
+    If version ever goes to 2.10.0, result is 2100000 which is still valid,
+    but 2.3.12 → 2031200 is technically 7 digits. Magisk expects integer.
+    This is fine for typical usage.
+
+[ GO DAEMON BUILD ]
+  → Cross-compiles for android/arm64 with CGO_ENABLED=0.
+  → Build flags:
+      -trimpath
+      -buildvcs=false
+      -ldflags="-s -w -buildid= -X main.version=${VERSION}"
+  ✓ Static binary, stripped, no debug info, version injected.
+  ✓ Good security practice: -buildid= removes reproducibility metadata.
+
+[ TESTS ]
+  → Runs "go test ./..." before build.
+  → Warns but does NOT abort on test failure.
+  ⚠ WARN: Tests failing still produces a build. For CI, this should be
+    stricter (set -e would abort, but the || echo absorbs failure).
+
+[ BINARY CHECKS ]
+  → sshcustomd: built from source.
+  → tun2proxy: checked for existence, warns if missing.
+  → openvpn: NOT mentioned in build.sh at all.
+  ⚠ CRITICAL: openvpn is expected by customize.sh and ovpn.service, but
+    build.sh does not verify or build it. The CI workflow (build.yml) may
+    handle this, but local builds will produce incomplete ZIPs unless the
+    user manually places openvpn in module/bin/.
+
+[ ZIP PACKAGING ]
+  → Creates dist/SSHCustom-VPNChain-v${VERSION}.zip
+  → Excludes: .DS_Store, __MACOSX, bin/.gitkeep, vpnchain/configs/.gitkeep
+  ✓ Clean ZIP without development artifacts.
+
+[ OVERALL build.sh RATING ]
+  ✓ Solid Go cross-compilation.
+  ⚠ Major: openvpn binary is completely absent from build.sh scope.
+  ⚠ Minor: test failures don't block packaging.
+  ⚠ Minor: tun2proxy is expected pre-placed, not built locally.
+
+═══════════════════════════════════════════════════════════════════════════════
+5. ovpn.service  — VPN CHAIN LIFECYCLE
+═══════════════════════════════════════════════════════════════════════════════
+
+[ DEPENDENCIES ]
+  → Sources /data/adb/sshcustom/settings.ini.
+  → Requires SSHCustom already connected (uses SOCKS5 proxy).
+  → Requires TCP-based OpenVPN config (SSH carries TCP only).
+
+[ CONFIG VALIDATION ]
+  → Checks config filename argument.
+  → Verifies config file exists in ${CONFIG_DIR}/${cfg_name}.
+  → Verifies openvpn binary is executable.
+  → Checks if already running (ovpn_alive via PID file + kill -0).
+  ✓ Good pre-flight checks.
+
+[ AUTH VALIDATION ]
+  → Reads auth.txt line 1 (user) and line 2 (pass).
+  → Validates both are non-empty.
+  → If invalid, restores SSH iptables and aborts.
+  ✓ Prevents half-initialized VPN state.
+
+[ MARKER & IPTABLES HANDOFF ]
+  → Creates ${box_run}/vpnchain.active marker.
+  → Disables ssh.iptables (removes SSH redirect rules).
+  → vpnchain.iptables will be enabled AFTER OpenVPN connects.
+  ✓ Clean handoff: SSH-only → OpenVPN-via-SSH.
+
+[ OPENVPN INVOCATION ]
+  Key arguments:
+    --config "${cfg}"
+    --dev tun1              (tun0 reserved)
+    --socks-proxy 127.0.0.1 ${socks_port}
+    --tun-mtu 1280
+    --mssfix 1200
+    --sndbuf 524288 / --rcvbuf 524288
+    --pull-filter ignore "redirect-gateway"
+    --pull-filter ignore "dhcp-option"
+    --pull-filter ignore "tcp-nodelay"
+    --pull-filter ignore "socket-flags"
+    --auth-nocache
+    --persist-tun
+    --mute-replay-warnings
+  ✓ Forced tun1 prevents device conflict.
+  ✓ SOCKS proxy routes OpenVPN through SSH tunnel.
+  ✓ pull-filter ignores Android-incompatible directives.
+  ✓ auth-nocache prevents credential memory exposure.
+
+[ STARTUP MONITORING ]
+  → Polls OVPN_LOG for "Initialization Sequence Completed" up to 30s.
+  → Detects AUTH_FAILED and aborts with cleanup.
+  → Detects early openvpn exit and aborts with cleanup.
+  → On success, enables vpnchain.iptables.
+  ✓ Robust startup state machine with automatic rollback on failure.
+
+[ STOP LOGIC ]
+  → Sends TERM, waits 5s, then KILL if still alive.
+  → Calls vpnchain.iptables force-disable (kills openvpn, drops tun1,
+    flushes routes, restores carrier).
+  → Removes marker.
+  → Re-enables ssh.iptables.
+  ✓ Complete restoration of SSH-only routing on stop.
+
+[ STATUS ]
+  → connected / connecting / stopped based on PID + log grep.
+  ✓ Simple, effective.
+
+[ OVERALL ovpn.service RATING ]
+  ✓ Excellent lifecycle management with proper rollback.
+  ✓ Clean separation between SSH and VPN Chain routing states.
+  ✓ Good use of pull-filter for Android compatibility.
+
+═══════════════════════════════════════════════════════════════════════════════
+6. vpnchain.iptables  — VPN CHAIN ROUTING RULES
+═══════════════════════════════════════════════════════════════════════════════
+
+[ ANDROID ROUTING STRATEGY ]
+  → Does NOT modify Android's main routing table or default route.
+  → Creates custom table 9041 with default via tun1.
+  → Uses ip rule pref 9041 (high priority, low number) to intercept
+    APP traffic (uidrange 10000-99999) before Android's per-network rules.
+  → System/root traffic (uid 0-9999) stays on carrier routing.
+  ✓ Correct: avoids breaking Android's network management.
+  ✓ Correct: prevents routing loop (OpenVPN's own traffic stays on carrier,
+    reaches SSH SOCKS on carrier path).
+
+[ IPTABLES VERSION DETECTION ]
+  → Android 11+: uses "iptables -w 100" (wait 100s for lock).
+  → Pre-Android 11: uses plain "iptables".
+  ✓ Handles iptables lock contention on newer Android versions.
+
+[ DNS REDIRECTION ]
+  → Creates SSHC_VPNDNS chain in nat table.
+  → DNATs app DNS (UDP/TCP 53) to 8.8.8.8:53.
+  ⚠ NOTE: Hardcodes Google DNS (8.8.8.8). If Windscribe blocks or filters
+    Google DNS, this will break. Consider making configurable.
+  ✓ Necessary because carrier/private DNS IPs are unreachable via VPN.
+
+[ CAPTIVE PORTAL ]
+  → Disables captive portal detection while chain is active.
+  ✓ Prevents Android from detecting "no internet" and switching networks.
+
+[ CLEANUP ]
+  → disable: removes ip rule, flushes table 9041, removes nat chain.
+  → force-disable: additionally kills openvpn, drops tun1 device.
+  ✓ Thorough cleanup, safe to call multiple times.
+
+[ OVERALL vpnchain.iptables RATING ]
+  ✓ Sophisticated, Android-aware routing.
+  ✓ No permanent system modifications.
+  ⚠ Minor: hardcoded 8.8.8.8 DNS should be configurable.
+
+═══════════════════════════════════════════════════════════════════════════════
+CROSS-CUTTING FINDINGS
+═══════════════════════════════════════════════════════════════════════════════
+
+[ SECURITY ]
+  ✓ Credential files (auth.txt) created with 600 permissions.
+  ✓ WORK_DIR created with 700 permissions.
+  ✓ Daemon built with -buildid= (no reproducible build metadata).
+  ✓ auth-nocache in OpenVPN prevents credential caching.
+  ⚠ settings.ini contains plaintext ssh_password. No encryption at rest.
+    This is standard for Magisk modules but worth noting.
+
+[ RELIABILITY ]
+  ✓ service.sh has 5-minute boot timeout.
+  ✓ ovpn.service has 30-second connection timeout with rollback.
+  ✓ uninstall.sh kills processes and restores IPv6.
+  ✓ All scripts use "2>/dev/null || true" extensively for idempotency.
+  ⚠ customize.sh does not verify tun2proxy/openvpn in _verify().
+
+[ COMPLETENESS ]
+  ⚠ build.sh does not handle openvpn binary at all.
+  ⚠ build.sh does not build tun2proxy from source (expects pre-built).
+  ⚠ settings.ini lacks a default dns_server for vpnchain.iptables.
+
+[ COMPATIBILITY ]
+  ✓ Supports Magisk, KernelSU, and APatch (unified customize.sh/service.sh).
+  ✓ Android 11+ iptables -w handling.
+  ✓ arm64-v8a only (prevents broken installs).
+  ✓ OpenVPN configs filtered for Android compatibility.
+
+[ MAINTAINABILITY ]
+  ✓ Well-commented scripts.
+  ✓ Consistent logging with timestamps.
+  ✓ Modular design: ssh.iptables / vpnchain.iptables / ovpn.service
+    are separate, testable units.
+  ⚠ Some TODOs/Future comments in customize.sh (diff-merge settings.ini)
+    not yet implemented.
+
+═══════════════════════════════════════════════════════════════════════════════
+SUMMARY
+═══════════════════════════════════════════════════════════════════════════════
+
+  customize.sh      → STRONG   (good structure, minor verification gaps)
+  service.sh        → STRONG   (excellent boot robustness)
+  uninstall.sh      → STRONG   (comprehensive cleanup)
+  build.sh          → MODERATE (missing openvpn, test failures non-blocking)
+  ovpn.service      → STRONG   (excellent lifecycle with rollback)
+  vpnchain.iptables → STRONG   (sophisticated Android routing)
+
+RECOMMENDED ACTIONS:
+  1. Add openvpn binary acquisition to build.sh (download or build step).
+  2. Add tun2proxy build step or stronger verification in build.sh.
+  3. Add tun2proxy/openvpn to customize.sh _verify() checks.
+  4. Make vpnchain DNS target (8.8.8.8) configurable in settings.ini.
+  5. Consider making test failures abort the build (CI safety).
+  6. Implement settings.ini key migration for seamless upgrades.
+
+═══════════════════════════════════════════════════════════════════════════════
+END OF AUDIT
+═══════════════════════════════════════════════════════════════════════════════

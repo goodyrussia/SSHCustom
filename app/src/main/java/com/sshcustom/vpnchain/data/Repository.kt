@@ -27,9 +27,7 @@ import java.util.concurrent.TimeUnit
 private const val PREFS_NAME   = "sshcustom_prefs"
 private const val KEY_PROFILES = "profiles_json"
 private const val KEY_ACTIVE   = "active_profile_id"
-private const val KEY_SETTINGS = "app_settings_json"
-private const val KEY_VPN_CONFIG = "vpn_selected_config"
-private const val KEY_LAST_CONN    = "last_connected"
+private const val KEY_SETTINGS = "app_settings_json"private const val KEY_LAST_CONN    = "last_connected"
 private const val KEY_LAST_SSHMODE = "last_ssh_mode"
 private const val KEY_LAST_NETMODE = "last_net_mode"
 private const val KEY_LAST_VER     = "last_version"
@@ -55,13 +53,6 @@ class DaemonRepository(private val context: Context) {
         .build()
 
     private val baseUrl = "http://127.0.0.1:9190"
-
-    // Longer-timeout client for the chained exit-IP lookup (goes through the
-    // full SSH+OpenVPN chain, so it can be slower than a loopback call).
-    private val longHttp = OkHttpClient.Builder()
-        .connectTimeout(8, TimeUnit.SECONDS)
-        .readTimeout(8, TimeUnit.SECONDS)
-        .build()
 
     // ── Polling flows ─────────────────────────────────────────────────────────
 
@@ -170,30 +161,7 @@ class DaemonRepository(private val context: Context) {
 
     fun saveSettings(settings: AppSettings) {
         prefs.edit().putString(KEY_SETTINGS, json.encodeToString(settings)).apply()
-    }
-
-    // ── VPN Chain persistence ─────────────────────────────────────────────────
-
-    fun loadVpnConfig(): String = prefs.getString(KEY_VPN_CONFIG, "") ?: ""
-    fun saveVpnConfig(name: String) { prefs.edit().putString(KEY_VPN_CONFIG, name).apply() }
-
-    /**
-     * The exit IP as seen through the full chain. When the VPN Chain is up the
-     * app's own traffic routes through OpenVPN, so this returns the Windscribe
-     * IP/country. Uses HTTPS so Android's cleartext policy doesn't block it.
-     */
-    fun fetchChainExitIp(): String {
-        return try {
-            val req = Request.Builder().url("https://ipinfo.io/json").build()
-            val body = longHttp.newCall(req).execute().use { it.body?.string() } ?: return "—"
-            val root = json.parseToJsonElement(body).jsonObject
-            val ip = root["ip"]?.jsonPrimitive?.content ?: ""
-            val country = root["country"]?.jsonPrimitive?.content ?: ""
-            if (ip.isNotEmpty()) (if (country.isNotEmpty()) "$ip  $country" else ip) else "—"
-        } catch (_: Exception) { "—" }
-    }
-
-    // ── Last-known state (seed on cold start to avoid the "Stopped" flash) ────
+    }    // ── Last-known state (seed on cold start to avoid the "Stopped" flash) ────
 
     fun saveLastState(s: DaemonStatus) {
         prefs.edit()
