@@ -44,7 +44,7 @@ chmod 700 "${WORK_DIR}"
 ui_print "  Installing binaries..."
 
 _install_bin() {
-  local src="${MODPATH}/bin/$1" dst="${WORK_DIR}/bin/$1"
+  local src="${MODPATH}/bin/arm64-v8a/$1" dst="${WORK_DIR}/bin/$1"
   if [ -f "${src}" ]; then
     cp -f "${src}" "${dst}" || { ui_print "  ERROR: failed to copy $1"; return 1; }
     chmod 755 "${dst}"
