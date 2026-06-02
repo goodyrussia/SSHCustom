@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [main, no-vpnchain]
+    branches: [main]
     tags: ["v*"]
   pull_request:
     branches: [main]
@@ -67,13 +67,13 @@ jobs:
         run: |
           mkdir -p dist
           cd module
-          zip -r9 "../dist/SSHCustom-v${VERSION}-novpnchain.zip" . -x "*.DS_Store" -x "__MACOSX/*" -x "bin/.gitkeep" -x "vpnchain/configs/.gitkeep"
-          ls -lh "../dist/SSHCustom-v${VERSION}-novpnchain.zip"
+          zip -r9 "../dist/SSHCustom-v${VERSION}.zip" . -x "*.DS_Store" -x "__MACOSX/*" -x "bin/.gitkeep"
+          ls -lh "../dist/SSHCustom-v${VERSION}.zip"
 
       - uses: actions/upload-artifact@v4
         with:
           name: module-zip
-          path: dist/SSHCustom-v${{ env.VERSION }}-novpnchain.zip
+          path: dist/SSHCustom-v${{ env.VERSION }}.zip
 
   # ── 3. Build Android APK (release, arm64-only) ───────────────────────────
   build-apk:
@@ -154,7 +154,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: "SSHCustom ${{ github.ref_name }} (no-vpnchain)"
+          name: "SSHCustom ${{ github.ref_name }}"
           draft: false
           prerelease: false
           overwrite_files: true
@@ -162,10 +162,7 @@ jobs:
             dist/*.zip
             dist/*.apk
           body: |
-            ## SSHCustom ${{ github.ref_name }} — SSH-Only (no-vpnchain)
-
-            All VPNChain/OpenVPN/Windscribe code removed. Clean SSH tunnel.
-
+            ## SSHCustom ${{ github.ref_name }}
             ### Installation
             1. Flash the ZIP via Magisk / KernelSU / APatch
             2. Reboot

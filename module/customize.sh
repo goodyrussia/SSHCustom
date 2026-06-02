@@ -3,7 +3,7 @@
 SKIPUNZIP=1
 
 ui_print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-ui_print "  SSHCustom v2.0.0"
+ui_print "  SSHCustom v2.3.13"
 ui_print "  SSH Transparent Proxy Module"
 ui_print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
@@ -87,15 +87,6 @@ else
   ui_print "  NOTE: new options may be available — see module docs"
 fi
 
-# ── VPN Chain: auth template (create if missing or still template) ────────────
-
-
-
-if [ -d "${OLD_DIR}" ] && [ "${OLD_DIR}" != "${WORK_DIR}" ]; then
-  ui_print "  Migrating config from old path..."
-  [ -f "${OLD_DIR}/settings.ini" ] && [ ! -f "${WORK_DIR}/settings.ini" ] && \
-    cp "${OLD_DIR}/settings.ini" "${WORK_DIR}/settings.ini"
-fi
 
 # ── Verify critical files installed ──────────────────────────────────────────
 _verify() {
