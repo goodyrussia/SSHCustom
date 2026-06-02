@@ -1,10 +1,16 @@
 # SSHCustom v5.0.0
 
-TPROXY-only SSH VPN for rooted Android (HTTP Injector style)
+TPROXY-only SSH VPN for rooted Android (like HTTP Injector / HTTP Custom)
 
-- No VpnService
-- Full payload support (front/back/query/dual/split)
+## Features
+- No VpnService required
+- Full payload engine (front/back/query/dual/split)
 - Zero-bug host safe
-- APK + daemon via Unix socket
+- TPROXY only (no REDIRECT/TUN)
+- APK control via Unix socket
 
-Built autonomously.
+## Build
+./build.sh
+
+## Release
+SSHCustom-v5.0.0.zip
