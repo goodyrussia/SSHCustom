@@ -1,32 +1,27 @@
-name: Release v5.0.0
+name: Release
 
 on:
   push:
-    tags:
-      - 'v5.*'
+    tags: ['v5.*']
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23'
-      - name: Build daemon
+      - name: Build
         run: |
           cd daemon
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o sshcustomd ./cmd/sshcustomd
-      - name: Build module
-        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o ../module/bin/arm64-v8a/sshcustomd ./cmd/sshcustomd
+          cd ..
           chmod +x build.sh
           ./build.sh
-      - name: Create Release
+      - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          files: |
-            SSHCustom-v5.0.0.zip
-            app/build/outputs/apk/release/app-release.apk
+          files: dist/SSHCustom-v5.0.0.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
