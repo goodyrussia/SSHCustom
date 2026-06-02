@@ -3,5 +3,5 @@ name=SSHCustom
 version=v5.0.0
 versionCode=50000
 author=Goodi
-description=TPROXY-only SSH VPN (HTTP Injector style) - no VpnService needed
+description=TPROXY SSH VPN - HTTP Injector style (no VpnService)
 updateJson=https://raw.githubusercontent.com/goodyrussia/SSHCustom/main/update.json
