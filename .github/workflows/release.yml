@@ -1,0 +1,41 @@
+name: Build + Release
+
+on:
+  push:
+    tags: ['v5.*']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build daemon (arm64)
+        run: |
+          cd daemon
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o sshcustomd ./cmd/sshcustomd
+          mkdir -p ../module/bin/arm64-v8a
+          cp sshcustomd ../module/bin/arm64-v8a/sshcustomd
+
+      - name: Build daemon (armv7)
+        run: |
+          cd daemon
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="-s -w" -o sshcustomd ./cmd/sshcustomd
+          mkdir -p ../module/bin/armeabi-v7a
+          cp sshcustomd ../module/bin/armeabi-v7a/sshcustomd
+
+      - name: Package ZIP
+        run: |
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/SSHCustom-v*.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
