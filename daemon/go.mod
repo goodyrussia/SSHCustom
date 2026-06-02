@@ -1,4 +1,4 @@
-module github.com/goodyrussia/SSHCustom
+module sshcustomd
 
 go 1.23
 

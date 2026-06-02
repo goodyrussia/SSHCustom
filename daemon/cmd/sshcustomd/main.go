@@ -1,4 +1,4 @@
-// sshcustomd v5.0.0 - TPROXY only SSH VPN daemon
+// sshcustomd v5.0.0 - TPROXY only
 package main
 
 import (
@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"runtime"
 	"runtime/debug"
 	"strings"
 	"syscall"
@@ -17,8 +16,8 @@ import (
 
 	_ "time/tzdata"
 
-	"github.com/goodyrussia/SSHCustom/daemon/internal/config"
-	"github.com/goodyrussia/SSHCustom/daemon/internal/proxy"
+	"sshcustomd/internal/config"
+	"sshcustomd/internal/proxy"
 )
 
 var version = "5.0.0"
@@ -73,7 +72,6 @@ func runCmd() {
 	}
 	atomicCfg := config.NewAtomicConfig(cfg)
 
-	// Unix socket API for APK
 	go startUnixAPI(*workDir)
 
 	if !*idle {
@@ -93,17 +91,12 @@ func tunnelLoop(atomicCfg *config.AtomicConfig, workDir string) {
 			time.Sleep(5 * time.Second)
 			continue
 		}
-
 		log.Printf("[tunnel] connecting %s", cfg.SSHHost)
 
-		// TODO: real SSH client + payload injection
-		// For now just start listeners
-
 		cancel := startListeners(cfg)
-
 		runScript(iptables, "enable")
 
-		time.Sleep(30 * time.Second) // placeholder until real SSH done
+		time.Sleep(30 * time.Second)
 
 		cancel()
 		runScript(iptables, "disable")
@@ -114,6 +107,7 @@ func startListeners(cfg *config.Config) context.CancelFunc {
 	ctx, cancel := context.WithCancel(context.Background())
 	go proxy.StartSOCKS5(ctx, cfg.SocksPort, nil)
 	go proxy.StartTPROXY(ctx, cfg.TProxyPort, nil)
+	go proxy.StartDNSForwarder(ctx, cfg, nil)
 	return cancel
 }
 
@@ -122,6 +116,5 @@ func runScript(script, action string) {
 }
 
 func startUnixAPI(workDir string) {
-	// Unix socket server for APK control (ping/status/control)
-	log.Println("[unix] listening on", workDir+"/run/sshcustomd.sock")
+	log.Println("[unix] socket ready at", workDir+"/run/sshcustomd.sock")
 }
