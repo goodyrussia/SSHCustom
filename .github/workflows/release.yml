@@ -12,9 +12,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
 
       - name: Build daemon (arm64)
         run: |
@@ -30,15 +36,23 @@ jobs:
           mkdir -p ../module/bin/armeabi-v7a
           cp sshcustomd ../module/bin/armeabi-v7a/sshcustomd
 
-      - name: Package ZIP
+      - name: Package module ZIP
         run: |
           chmod +x build.sh
           ./build.sh
 
+      - name: Build APK
+        run: |
+          cd app
+          chmod +x gradlew
+          ./gradlew assembleRelease
+
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/SSHCustom-v*.zip
+          files: |
+            dist/SSHCustom-v*.zip
+            app/build/outputs/apk/release/app-release.apk
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
