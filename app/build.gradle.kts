@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "com.sshcustom.vpnchain"
+    namespace = "com.sshcustom.app"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.sshcustom.vpnchain"
+        applicationId = "com.sshcustom.app"
         minSdk = 28
         targetSdk = 35
         versionCode = 20305

@@ -15,6 +15,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "SSHCustomVPNChain"
+rootProject.name = "SSHCustom"
 // No include() — this settings.gradle.kts IS already at the app root.
 // The Android application module is the root project itself.

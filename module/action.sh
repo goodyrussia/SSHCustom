@@ -7,15 +7,15 @@ MODDIR="${0%/*}"
 WORK_DIR="/data/adb/sshcustom"
 SERVICE="${WORK_DIR}/scripts/ssh.service"
 
-printf 'SSHCustom-VPNChain — please wait...\n'
+printf 'SSHCustom — please wait...\n'
 
 case "${1:-}" in
   start)
-    printf '%s [Info]: Starting SSHCustom-VPNChain...\n' "$(date '+%H:%M')"
+    printf '%s [Info]: Starting SSHCustom...\n' "$(date '+%H:%M')"
     sh "${SERVICE}" start
     ;;
   stop)
-    printf '%s [Info]: Stopping SSHCustom-VPNChain...\n' "$(date '+%H:%M')"
+    printf '%s [Info]: Stopping SSHCustom...\n' "$(date '+%H:%M')"
     sh "${SERVICE}" stop
     ;;
   status)

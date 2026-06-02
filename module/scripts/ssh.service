@@ -131,7 +131,7 @@ start_daemon() {
 
 # ── start_service ─────────────────────────────────────────────────────────────
 start_service() {
-  log Info "service: starting SSHCustom-VPNChain..."
+  log Info "service: starting SSHCustom..."
   printf 'Service starting, please wait...\n'
 
   mkdir -p "${box_run}" "${box_run_state}" >/dev/null 2>&1 || true
@@ -156,7 +156,7 @@ start_service() {
 
 # ── stop_service ──────────────────────────────────────────────────────────────
 stop_service() {
-  log Info "service: stopping SSHCustom-VPNChain..."
+  log Info "service: stopping SSHCustom..."
   printf 'Service stopping...\n'
 
   # Disable iptables first (loads runtime snapshot for targeted cleanup)

@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# uninstall.sh — Clean removal of SSHCustom-VPNChain.
+# uninstall.sh — Clean removal of SSHCustom.
 # Called by Magisk/KernelSU/APatch when the module is uninstalled.
 # Stops any running services, removes iptables rules, and deletes all
 # module data from /data/adb/sshcustom/ so nothing is left behind.
@@ -27,6 +27,6 @@ sysctl -w net.ipv6.conf.default.disable_ipv6=0 >/dev/null 2>&1 || true
 rm -rf "${WORK_DIR}"
 
 # Remove battery optimization whitelist for the companion app
-dumpsys deviceidle whitelist -com.sshcustom.vpnchain >/dev/null 2>&1 || true
+dumpsys deviceidle whitelist -com.sshcustom.app >/dev/null 2>&1 || true
 
 exit 0
