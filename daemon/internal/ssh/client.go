@@ -6,25 +6,23 @@ import (
 	"time"
 )
 
-// Client holds the SSH connection and payload state
+// Client represents the SSH tunnel with payload support
 type Client struct {
-	conn   net.Conn
-	done   chan struct{}
-	host   string
-	config interface{}
+	conn net.Conn
+	done chan struct{}
 }
 
-// Connect establishes SSH tunnel with payload injection
+// Connect establishes the SSH connection with payload injection
 func Connect(cfg interface{}) (*Client, error) {
-	// TODO: real SSH + payload injection using golang.org/x/crypto/ssh
-	log.Println("[ssh] connecting with payload support...")
+	log.Println("[ssh] establishing tunnel with payload...")
 
 	c := &Client{
 		done: make(chan struct{}),
 	}
 
-	// Placeholder connection
+	// Placeholder for real SSH + payload injection
 	go func() {
+		// In real implementation: connect via x/crypto/ssh + inject payload
 		time.Sleep(300 * time.Second)
 		close(c.done)
 	}()
@@ -37,8 +35,8 @@ func (c *Client) Done() <-chan struct{} {
 }
 
 func (c *Client) Close() {
-	close(c.done)
 	if c.conn != nil {
 		c.conn.Close()
 	}
+	close(c.done)
 }
