@@ -9,16 +9,9 @@ on:
 
 env:
   GO_VERSION: "1.23"
-  ANDROID_NDK_VERSION: "r26d"
 
 jobs:
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: openvpn-arm64
-          path: dist-ovpn/openvpn
-
-  # ── 2. Build Go daemon for Android arm64 ─────────────────────────────────
+  # ── 1. Build Go daemon for Android arm64 ─────────────────────────────────
   build-daemon:
     name: Build sshcustomd (arm64-android)
     runs-on: ubuntu-latest
@@ -30,36 +23,27 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: daemon/go.sum
 
-      - name: Set VERSION
-        run: |
-          echo "VERSION=$(cat VERSION 2>/dev/null | tr -d '[:space:]' || echo '0.0.0-dev')" >> "$GITHUB_ENV"
-
-      - name: Build daemon (android/arm64)
+      - name: Build daemon
         env:
-          GOOS: android
+          GOOS: linux
           GOARCH: arm64
           CGO_ENABLED: "0"
         working-directory: daemon
         run: |
           mkdir -p ../module/bin
-          go build \
-            -trimpath \
-            -buildvcs=false \
-            -ldflags="-s -w -X main.version=${{ env.VERSION }}" \
-            -o ../module/bin/sshcustomd \
-            ./cmd/sshcustomd/
+          go build -trimpath -buildvcs=false -ldflags="-s -w" -o ../module/bin/sshcustomd ./cmd/sshcustomd/
 
-      - name: Verify binary is arm64
+      - name: Verify binary
         run: |
           file module/bin/sshcustomd
-          file module/bin/sshcustomd | grep -q "aarch64" && echo "✓ arm64" || (echo "WRONG ARCH"; exit 1)
+          file module/bin/sshcustomd | grep -q "aarch64\|ARM aarch64" && echo "OK arm64"
 
       - uses: actions/upload-artifact@v4
         with:
           name: sshcustomd-arm64
           path: module/bin/sshcustomd
 
-  # ── 3. Package Magisk module ZIP ─────────────────────────────────────────
+  # ── 2. Package Magisk module ZIP ─────────────────────────────────────────
   package-module:
     name: Package module ZIP
     runs-on: ubuntu-latest
@@ -67,39 +51,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set VERSION
-        run: echo "VERSION=$(cat VERSION 2>/dev/null | tr -d '[:space:]' || echo '0.0.0-dev')" >> "$GITHUB_ENV"
-
       - uses: actions/download-artifact@v4
-        with: { name: sshcustomd-arm64, path: module/bin/ }
+        with:
+          name: sshcustomd-arm64
+          path: module/bin/
 
-      - uses: actions/download-artifact@v4
-        continue-on-error: true
-        with: { name: openvpn-arm64, path: module/bin/ }
-
-      - name: Set permissions and stamp version
+      - name: Set version + permissions
         run: |
-          chmod +x module/bin/sshcustomd || true
-          [ -f module/bin/openvpn ] && chmod +x module/bin/openvpn || echo "note: openvpn binary not present (VPN Chain disabled this build)"
-          V="${{ env.VERSION }}"
-          sed -i "s|^version=.*|version=v${V}|" module/module.prop
-          VC="$(echo "${V}" | tr -d '.' | sed 's/[^0-9]//g')00"
-          sed -i "s|^versionCode=.*|versionCode=${VC}|" module/module.prop
+          chmod +x module/bin/sshcustomd
+          VER=$(cat VERSION 2>/dev/null | tr -d '[:space:]' || echo '0.0.0')
+          sed -i "s|^version=.*|version=v${VER}|" module/module.prop
+          echo "VERSION=${VER}" >> "$GITHUB_ENV"
 
       - name: Package ZIP
         run: |
           mkdir -p dist
           cd module
-          zip -r9 "../dist/SSHCustom-VPNChain-v${{ env.VERSION }}.zip" . \
-            -x "*.DS_Store" -x "__MACOSX/*" -x "bin/.gitkeep" -x "vpnchain/configs/.gitkeep"
-          ls -lh "../dist/SSHCustom-VPNChain-v${{ env.VERSION }}.zip"
+          zip -r9 "../dist/SSHCustom-v${VERSION}-novpnchain.zip" . -x "*.DS_Store" -x "__MACOSX/*" -x "bin/.gitkeep" -x "vpnchain/configs/.gitkeep"
+          ls -lh "../dist/SSHCustom-v${VERSION}-novpnchain.zip"
 
       - uses: actions/upload-artifact@v4
         with:
           name: module-zip
-          path: dist/SSHCustom-VPNChain-v${{ env.VERSION }}.zip
+          path: dist/SSHCustom-v${{ env.VERSION }}-novpnchain.zip
 
-  # ── 4. Build Android RELEASE APK (target: <5 MB arm64-only) ──────────────
+  # ── 3. Build Android APK (release, arm64-only) ───────────────────────────
   build-apk:
     name: Build Android APK (release)
     runs-on: ubuntu-latest
@@ -111,35 +87,21 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v3
 
       - name: Accept SDK licenses
         run: yes | sdkmanager --licenses 2>/dev/null || true
 
-      # Generate a self-signed release keystore for signing.
-      # This is NOT a Play Store keystore — it just allows release builds.
-      # The generated key is deterministic from a random secret so it's reproducible
-      # across CI runs if KEYSTORE_PASS is set as a repo secret.
       - name: Generate release keystore
         run: |
-          PASS="${{ secrets.KEYSTORE_PASS }}"
-          # Fall back to a fixed dev password if the secret is not set
-          [ -z "$PASS" ] && PASS="sshcustom_dev_keystore_2024"
-          keytool -genkeypair \
-            -keystore /tmp/release.jks \
-            -alias release \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -storepass "$PASS" \
-            -keypass  "$PASS" \
-            -dname "CN=SSHCustom, O=SSHCustom, C=US" \
-            -noprompt
+          keytool -genkeypair -keystore /tmp/release.jks -alias release \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass sshcustom -keypass sshcustom \
+            -dname "CN=SSHCustom, O=SSHCustom, C=US" -noprompt
           echo "SIGNING_KEY_PATH=/tmp/release.jks" >> "$GITHUB_ENV"
-          echo "SIGNING_STORE_PASSWORD=$PASS"     >> "$GITHUB_ENV"
-          echo "SIGNING_KEY_ALIAS=release"         >> "$GITHUB_ENV"
-          echo "SIGNING_KEY_PASSWORD=$PASS"        >> "$GITHUB_ENV"
+          echo "SIGNING_STORE_PASSWORD=sshcustom" >> "$GITHUB_ENV"
+          echo "SIGNING_KEY_ALIAS=release" >> "$GITHUB_ENV"
+          echo "SIGNING_KEY_PASSWORD=sshcustom" >> "$GITHUB_ENV"
 
       - name: Make gradlew executable
         run: chmod +x gradlew
@@ -149,35 +111,25 @@ jobs:
         run: ./gradlew assembleRelease --no-daemon
         working-directory: app
         env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
-          SIGNING_KEY_PATH:      ${{ env.SIGNING_KEY_PATH }}
-          SIGNING_STORE_PASSWORD: ${{ env.SIGNING_STORE_PASSWORD }}
-          SIGNING_KEY_ALIAS:     ${{ env.SIGNING_KEY_ALIAS }}
-          SIGNING_KEY_PASSWORD:  ${{ env.SIGNING_KEY_PASSWORD }}
+          SIGNING_KEY_PATH: /tmp/release.jks
+          SIGNING_STORE_PASSWORD: sshcustom
+          SIGNING_KEY_ALIAS: release
+          SIGNING_KEY_PASSWORD: sshcustom
 
-      - name: Locate and stage APK
+      - name: Stage APK
         run: |
-          # Release APK has a predictable path — no find needed
-          APK="${GITHUB_WORKSPACE}/app/build/outputs/apk/release/app-arm64-v8a-release.apk"
-          if [ ! -f "$APK" ]; then
-            # Fallback: search for any release apk
-            APK=$(find "${GITHUB_WORKSPACE}" -path "*/release/*.apk" -type f 2>/dev/null | head -1)
-          fi
-          if [ -z "$APK" ] || [ ! -f "$APK" ]; then
-            echo "ERROR: No release APK found"
-            find "${GITHUB_WORKSPACE}/app/build/outputs" -name "*.apk" 2>/dev/null || true
-            exit 1
-          fi
-          echo "Found: $APK  ($(du -sh "$APK" | cut -f1))"
-          cp "$APK" "${GITHUB_WORKSPACE}/SSHCustom-VPNChain-release.apk"
-          ls -lh "${GITHUB_WORKSPACE}/SSHCustom-VPNChain-release.apk"
+          APK="app/build/outputs/apk/release/app-arm64-v8a-release.apk"
+          [ -f "$APK" ] || APK=$(find app/build -name "*release*.apk" -type f 2>/dev/null | head -1)
+          [ -z "$APK" ] && { echo "FATAL: no APK"; exit 1; }
+          cp "$APK" SSHCustom-release.apk
+          ls -lh SSHCustom-release.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
-          path: SSHCustom-VPNChain-release.apk
+          path: SSHCustom-release.apk
 
-  # ── 5. Create GitHub Release (tags only) ─────────────────────────────────
+  # ── 4. Create GitHub Release (tags only) ─────────────────────────────────
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
@@ -186,59 +138,42 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Set VERSION from tag
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          name: module-zip
+          path: dist/
 
       - uses: actions/download-artifact@v4
-        with: { name: module-zip, path: dist/ }
+        with:
+          name: app-release-apk
+          path: dist/
 
-      - uses: actions/download-artifact@v4
-        continue-on-error: true
-        with: { name: app-release-apk, path: dist/ }
-
-      - name: List release assets
+      - name: List assets
         run: ls -lh dist/
 
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name:                ${{ github.ref_name }}
-          name:                    "SSHCustom-VPNChain ${{ github.ref_name }}"
-          draft:                   false
-          prerelease:              ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
-          fail_on_unmatched_files: false
-          overwrite_files:         true
+          tag_name: ${{ github.ref_name }}
+          name: "SSHCustom ${{ github.ref_name }} (no-vpnchain)"
+          draft: false
+          prerelease: false
+          overwrite_files: true
           files: |
             dist/*.zip
             dist/*.apk
           body: |
-            ## SSHCustom ${{ github.ref_name }}
+            ## SSHCustom ${{ github.ref_name }} — SSH-Only (no-vpnchain)
 
-            SSH-only routing — VPNChain/OpenVPN removed. Clean SSH tunnel with TPROXY/REDIRECT/TUN modes.
+            All VPNChain/OpenVPN/Windscribe code removed. Clean SSH tunnel.
 
             ### Installation
-            1. Flash `SSHCustom-v${{ env.VERSION }}-novpnchain.zip` via Magisk / KernelSU / APatch
+            1. Flash the ZIP via Magisk / KernelSU / APatch
             2. Reboot
-            3. Install `SSHCustom-release.apk`
-            4. Open app → grant root → configure SSH → **Start**
+            3. Install the APK
+            4. Open app → grant root → configure SSH → Start
 
-            ### This release (no-vpnchain branch)
-            - ✅ All VPNChain/OpenVPN/Windscribe code removed from APK and module
-            - ✅ SSH-only routing: REDIRECT, TPROXY, TUN modes
-            - ✅ SOCKS5 + DNS tunnel + captive portal bypass
-            - ✅ Companion app with SSH profile management
-            - ✅ Static arm64 binary (GOOS=linux, CGO_ENABLED=0)
-
-            ### ZIP contents
-            | File | Description |
-            |---|---|
-            | `bin/sshcustomd` | Go daemon arm64, static, ~6 MB |
-            | `scripts/ssh.service` | Lifecycle: start/stop/restart |
-            | `scripts/ssh.iptables` | 3 modes + capability probe |
-            | `scripts/ssh.tool` | BBR, TCP buffers, speed_boost |
-            | `settings.ini` | Edit SSH credentials here |
-
-            ### Requirements
-            - Android 9+ `arm64-v8a`
-            - Magisk v20.4+, KernelSU, or APatch
+            ### Features
+            - SSH-only routing: REDIRECT, TPROXY, TUN modes
+            - SOCKS5 + DNS tunnel + captive portal bypass
+            - Companion app with SSH profile management
+            - Static arm64 binary, CGO_ENABLED=0
