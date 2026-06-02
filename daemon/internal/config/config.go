@@ -33,10 +33,9 @@ type Config struct {
 	Payload        string
 
 	// Network
-	NetworkMode string // redirect | tproxy
+	NetworkMode string // tproxy
 	SocksPort   int
 	TProxyPort  int
-	RedirPort   int
 
 	// Proxy behaviour
 	ProxyTCP bool
@@ -91,10 +90,9 @@ func DefaultConfig() *Config {
 		SSHPort:         22,
 		SSHMode:         "direct",
 		HTTPProxyPort:   3128,
-		NetworkMode:     "redirect",
+		NetworkMode:     "tproxy",
 		SocksPort:       1080,
 		TProxyPort:      9898,
-		RedirPort:       9797,
 		ProxyTCP:        true,
 		ProxyUDP:        false,
 		QUIC:            "disable",
@@ -170,7 +168,6 @@ func (c *Config) apply(key, val string) {
 	case "network_mode":    c.NetworkMode = val
 	case "socks_port":      c.SocksPort = n(val, 1080)
 	case "tproxy_port":     c.TProxyPort = n(val, 9898)
-	case "redir_port":      c.RedirPort = n(val, 9797)
 	case "proxy_tcp":       c.ProxyTCP = b(val)
 	case "proxy_udp":       c.ProxyUDP = b(val)
 	case "quic":            c.QUIC = val

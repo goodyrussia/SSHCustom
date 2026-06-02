@@ -3,7 +3,7 @@
 SKIPUNZIP=1
 
 ui_print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-ui_print "  SSHCustom v2.3.13"
+ui_print "  SSHCustom v1.0.1"
 ui_print "  SSH Transparent Proxy Module"
 ui_print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 

@@ -3,8 +3,6 @@
 # These rules preserve classes that are accessed via reflection or JNI.
 
 # ── App classes ────────────────────────────────────────────────────────────
--keep class com.sshcustom.vpnchain.** { *; }
--keepclassmembers class com.sshcustom.vpnchain.** { *; }
 
 # ── libsu / RootService ────────────────────────────────────────────────────
 -keep class com.topjohnwu.superuser.** { *; }

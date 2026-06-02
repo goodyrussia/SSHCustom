@@ -4,6 +4,7 @@
 #
 # Usage: ssh.iptables {enable|disable|renew}
 # All custom chains use SSHC_ prefix to avoid collisions.
+# v1.0.1 — TPROXY-only; REDIRECT and TUN modes stripped.
 
 scripts_dir="${0%/*}"
 . /data/adb/sshcustom/settings.ini
@@ -26,11 +27,6 @@ fi
 fwmark="16777216/16777216"
 table="2024"
 pref="100"
-tun_bypass_mark="33554432/33554432"
-tun_bypass_pref="98"
-tun_route_mark="50331648/50331648"
-tun_route_table="2025"
-tun_route_pref="99"
 
 # ── intranet subnets (always bypass) ─────────────────────────────────────────
 intranet="0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16
@@ -117,19 +113,16 @@ probe_capabilities() {
 
 apply_capability_downgrades() {
   probe_capabilities
-  local orig_mode="${network_mode}" orig_dns="${dns_hijack_mode}"
 
-  if [ "${network_mode}" = "tproxy" ] && [ "${cap_tproxy4}" != "true" ]; then
-    log Warning "cap: TPROXY not supported — downgrading to redirect"
-    network_mode="redirect"
-  fi
-  if [ "${dns_hijack_mode}" = "tproxy" ] && [ "${cap_tproxy4}" != "true" ]; then
-    log Warning "cap: TPROXY not supported — downgrading dns_hijack_mode to redirect"
-    dns_hijack_mode="redirect"
+  if [ "${cap_tproxy4}" != "true" ]; then
+    log Error "cap: TPROXY not supported by this kernel — SSHCustom requires TPROXY"
+    printf 'ERROR: TPROXY not supported by kernel.\n' >&2
+    printf 'This module requires TPROXY (xt_TPROXY.ko).\n' >&2
+    printf 'Please use a kernel that supports TPROXY.\n' >&2
+    exit 1
   fi
 
-  [ "${orig_mode}" != "${network_mode}" ] && log Info "cap: final network_mode=${network_mode}"
-  [ "${orig_dns}"  != "${dns_hijack_mode}" ] && log Info "cap: final dns_hijack_mode=${dns_hijack_mode}"
+  log Info "cap: TPROXY available — tproxy4=${cap_tproxy4} tproxy6=${cap_tproxy6}"
 }
 
 
@@ -235,104 +228,9 @@ cleanup_quic_block() {
   ${iptables} -t filter -D OUTPUT -p udp --dport 80  -j DROP >/dev/null 2>&1 || true
 }
 
-# ── DNS hijack ────────────────────────────────────────────────────────────────
-setup_dns_hijack() {
-  [ "${dns_hijack_mode}" = "redirect" ] || return 0
-  if [ "${iptables}" = "${IP6V}" ] && [ "${cap_ip6_nat}" != "true" ]; then return 0; fi
-
-  local chain="SSHC_DNS_HIJACK"
-  [ "${iptables}" = "${IP6V}" ] && chain="SSHC_DNS_HIJACK6"
-  ensure_chain nat "${chain}"
-  ${iptables} -t nat -A "${chain}" -m owner --uid-owner "${box_user}" --gid-owner "${box_group}" -j RETURN 2>/dev/null || true
-  [ "${dns_hijack_tcp}" = "true" ] && \
-    ${iptables} -t nat -A "${chain}" -p tcp --dport 53 -j REDIRECT --to-ports "${redir_port}" >/dev/null 2>&1 || true
-  [ "${dns_hijack_udp}" = "true" ] && \
-    ${iptables} -t nat -A "${chain}" -p udp --dport 53 -j REDIRECT --to-ports "${redir_port}" >/dev/null 2>&1 || true
-  ensure_jump nat PREROUTING "${chain}"
-  ensure_jump nat OUTPUT "${chain}"
-  return 0
-}
-
-cleanup_dns_hijack() {
-  for chain in SSHC_DNS_HIJACK SSHC_DNS_HIJACK6; do
-    del_jump nat PREROUTING "${chain}"
-    del_jump nat OUTPUT "${chain}"
-    cleanup_chain nat "${chain}"
-  done
-}
-
 
 # ══════════════════════════════════════════════════════════
-# MODE 1: REDIRECT (nat, TCP only, most compatible)
-# ══════════════════════════════════════════════════════════
-start_redirect() {
-  if [ "${iptables}" = "${IP6V}" ] && [ "${cap_ip6_nat}" != "true" ]; then
-    [ "${ipv6}" = "true" ] && log Warning "redirect: ip6tables NAT unavailable, skipping IPv6"
-    return 0
-  fi
-
-  local ext="SSHC_EXTERNAL" loc="SSHC_LOCAL"
-  [ "${iptables}" = "${IP6V}" ] && ext="SSHC_EXTERNAL6" && loc="SSHC_LOCAL6"
-
-  ensure_chain nat "${ext}"
-  ${iptables} -t nat -A "${ext}" -m owner --uid-owner "${box_user}" --gid-owner "${box_group}" -j RETURN 2>/dev/null || true
-  for sn in ${intranet}; do
-    ${iptables} -t nat -A "${ext}" -d "${sn}" -j RETURN >/dev/null 2>&1 || true
-  done
-  [ "${proxy_tcp}" = "true" ] && \
-    ${iptables} -t nat -A "${ext}" -p tcp -j REDIRECT --to-ports "${redir_port}" >/dev/null 2>&1 || true
-  ensure_jump nat PREROUTING "${ext}"
-
-  ensure_chain nat "${loc}"
-  ${iptables} -t nat -A "${loc}" -m owner --uid-owner "${box_user}" --gid-owner "${box_group}" -j RETURN 2>/dev/null || true
-  for sn in ${intranet}; do
-    ${iptables} -t nat -A "${loc}" -d "${sn}" -j RETURN >/dev/null 2>&1 || true
-  done
-  [ "${proxy_tcp}" = "true" ] && \
-    ${iptables} -t nat -A "${loc}" -p tcp -j REDIRECT --to-ports "${redir_port}" >/dev/null 2>&1 || true
-  ensure_jump nat OUTPUT "${loc}"
-
-  # Hotspot sharing — PREROUTING for hotspot interface clients
-  if [ "${hotspot_sharing:-false}" = "true" ] && [ "${proxy_tcp}" = "true" ]; then
-    local hspot="SSHC_HOTSPOT"
-    [ "${iptables}" = "${IP6V}" ] && hspot="SSHC_HOTSPOT6"
-    ensure_chain nat "${hspot}"
-    for sn in ${intranet}; do
-      ${iptables} -t nat -A "${hspot}" -d "${sn}" -j RETURN >/dev/null 2>&1 || true
-    done
-    ${iptables} -t nat -A "${hspot}" -p tcp -j REDIRECT --to-ports "${redir_port}" >/dev/null 2>&1 || true
-    # Apply to common hotspot interfaces
-    for iface in wlan0 wlan1 ap0 swlan0 rndis0 ncm0 bt-pan; do
-      ${iptables} -t nat -C PREROUTING -i "${iface}" -j "${hspot}" >/dev/null 2>&1 || \
-        ${iptables} -t nat -I PREROUTING -i "${iface}" -j "${hspot}" >/dev/null 2>&1 || true
-    done
-    log Info "redirect: hotspot sharing enabled via ${hspot}"
-  fi
-
-  setup_dns_hijack
-  apply_quic_block
-  log Info "redirect: rules applied (port=${redir_port})"
-  return 0
-}
-
-stop_redirect() {
-  # Remove hotspot interface jumps first
-  for iface in wlan0 wlan1 ap0 swlan0 rndis0 ncm0 bt-pan; do
-    for hchain in SSHC_HOTSPOT SSHC_HOTSPOT6; do
-      ${iptables} -t nat -D PREROUTING -i "${iface}" -j "${hchain}" >/dev/null 2>&1 || true
-    done
-  done
-  for chain in SSHC_EXTERNAL SSHC_LOCAL SSHC_EXTERNAL6 SSHC_LOCAL6 SSHC_HOTSPOT SSHC_HOTSPOT6; do
-    del_jump nat PREROUTING "${chain}"
-    del_jump nat OUTPUT "${chain}"
-    cleanup_chain nat "${chain}"
-  done
-  cleanup_dns_hijack
-  cleanup_quic_block
-}
-
-# ══════════════════════════════════════════════════════════
-# MODE 2: TPROXY (mangle, TCP+UDP, needs kernel support)
+# MODE: TPROXY (mangle, TCP+UDP, needs kernel support)
 # ══════════════════════════════════════════════════════════
 start_tproxy() {
   if [ "${cap_tproxy4}" != "true" ]; then
@@ -399,96 +297,10 @@ stop_tproxy() {
 }
 
 
-# ══════════════════════════════════════════════════════════
-# MODE 3 & 4: TUN / TUN+UDPGW
-# ══════════════════════════════════════════════════════════
-start_tun_bypass() {
-  local pre="SSHC_TUN_PRE" out="SSHC_TUN_OUT"
-  [ "${iptables}" = "${IP6V}" ] && pre="SSHC_TUN_PRE6" && out="SSHC_TUN_OUT6"
-
-  ensure_chain mangle "${pre}"
-  ${iptables} -t mangle -A "${pre}" -i "${tun_device}" -j RETURN >/dev/null 2>&1 || true
-  [ "${dns_hijack_tcp}" = "true" ] && \
-    ${iptables} -t mangle -A "${pre}" -p tcp --dport 53 -j MARK --set-xmark "${tun_route_mark}" >/dev/null 2>&1 || true
-  [ "${dns_hijack_udp}" = "true" ] && \
-    ${iptables} -t mangle -A "${pre}" -p udp --dport 53 -j MARK --set-xmark "${tun_route_mark}" >/dev/null 2>&1 || true
-  for sn in ${intranet}; do
-    ${iptables} -t mangle -A "${pre}" -d "${sn}" -j RETURN >/dev/null 2>&1 || true
-  done
-  ${iptables} -t mangle -A "${pre}" -j MARK --set-xmark "${tun_route_mark}" >/dev/null 2>&1 || true
-  ensure_jump mangle PREROUTING "${pre}"
-
-  ensure_chain mangle "${out}"
-  ${iptables} -t mangle -A "${out}" -m owner --uid-owner "${box_user}" --gid-owner "${box_group}" -j RETURN 2>/dev/null || true
-  [ "${dns_hijack_tcp}" = "true" ] && \
-    ${iptables} -t mangle -A "${out}" -p tcp --dport 53 -j MARK --set-xmark "${tun_route_mark}" >/dev/null 2>&1 || true
-  [ "${dns_hijack_udp}" = "true" ] && \
-    ${iptables} -t mangle -A "${out}" -p udp --dport 53 -j MARK --set-xmark "${tun_route_mark}" >/dev/null 2>&1 || true
-  for sn in ${intranet}; do
-    ${iptables} -t mangle -A "${out}" -d "${sn}" -j RETURN >/dev/null 2>&1 || true
-  done
-  ${iptables} -t mangle -A "${out}" -j MARK --set-xmark "${tun_route_mark}" >/dev/null 2>&1 || true
-  ensure_jump mangle OUTPUT "${out}"
-
-  # Policy routing
-  if [ "${iptables}" = "${IPV}" ]; then
-    ensure_ip_rule ip "${tun_bypass_mark}" "main" "${tun_bypass_pref}"
-    ensure_ip_rule ip "${tun_route_mark}"  "${tun_route_table}" "${tun_route_pref}"
-    ip route replace default dev "${tun_device}" table "${tun_route_table}" >/dev/null 2>&1 || true
-  else
-    ensure_ip_rule "ip -6" "${tun_bypass_mark}" "main" "${tun_bypass_pref}"
-    ensure_ip_rule "ip -6" "${tun_route_mark}"  "${tun_route_table}" "${tun_route_pref}"
-    ip -6 route replace default dev "${tun_device}" table "${tun_route_table}" >/dev/null 2>&1 || true
-  fi
-
-  # Forward rules for tun device
-  ${iptables} -t filter -C FORWARD -i "${tun_device}" -j ACCEPT >/dev/null 2>&1 || \
-    ${iptables} -t filter -I FORWARD -i "${tun_device}" -j ACCEPT >/dev/null 2>&1 || true
-  ${iptables} -t filter -C FORWARD -o "${tun_device}" -j ACCEPT >/dev/null 2>&1 || \
-    ${iptables} -t filter -I FORWARD -o "${tun_device}" -j ACCEPT >/dev/null 2>&1 || true
-
-  sysctl -w net.ipv4.ip_forward=1               >/dev/null 2>&1 || true
-  sysctl -w net.ipv4.conf.default.rp_filter=2   >/dev/null 2>&1 || true
-  sysctl -w net.ipv4.conf.all.rp_filter=2       >/dev/null 2>&1 || true
-
-  log Info "tun: rules applied (device=${tun_device})"
-  return 0
-}
-
-stop_tun_bypass() {
-  for chain in SSHC_TUN_PRE SSHC_TUN_OUT SSHC_TUN_PRE6 SSHC_TUN_OUT6; do
-    del_jump mangle PREROUTING "${chain}"
-    del_jump mangle OUTPUT "${chain}"
-    cleanup_chain mangle "${chain}"
-  done
-
-  if [ "${iptables}" = "${IPV}" ]; then
-    del_ip_rule ip "${tun_bypass_pref}"
-    del_ip_rule ip "${tun_route_pref}"
-    ip route flush table "${tun_route_table}" >/dev/null 2>&1 || true
-  else
-    del_ip_rule "ip -6" "${tun_bypass_pref}"
-    del_ip_rule "ip -6" "${tun_route_pref}"
-    ip -6 route flush table "${tun_route_table}" >/dev/null 2>&1 || true
-  fi
-
-  ${iptables} -t filter -D FORWARD -i "${tun_device}" -j ACCEPT >/dev/null 2>&1 || true
-  ${iptables} -t filter -D FORWARD -o "${tun_device}" -j ACCEPT >/dev/null 2>&1 || true
-
-  # Tear down TUN device
-  ip link set "${tun_device}" down 2>/dev/null || true
-  ip tuntap del "${tun_device}" mode tun 2>/dev/null || \
-    ip link del "${tun_device}" 2>/dev/null || true
-}
-
-
 # ── Full cleanup (all modes) ──────────────────────────────────────────────────
 cleanup_all() {
-  stop_redirect    2>/dev/null || true
   stop_tproxy      2>/dev/null || true
-  stop_tun_bypass  2>/dev/null || true
   cleanup_quic_block 2>/dev/null || true
-  cleanup_dns_hijack 2>/dev/null || true
   cleanup_dns_forward 2>/dev/null || true
 }
 
@@ -498,14 +310,11 @@ runtime_save() {
   {
     printf 'network_mode="%s"\n'   "${network_mode}"
     printf 'ipv6="%s"\n'           "${ipv6}"
-    printf 'dns_hijack_mode="%s"\n' "${dns_hijack_mode}"
     printf 'quic="%s"\n'           "${quic}"
     printf 'proxy_tcp="%s"\n'      "${proxy_tcp}"
     printf 'proxy_udp="%s"\n'      "${proxy_udp}"
     printf 'tproxy_port="%s"\n'    "${tproxy_port}"
-    printf 'redir_port="%s"\n'     "${redir_port}"
     printf 'socks_port="%s"\n'     "${socks_port}"
-    printf 'tun_device="%s"\n'     "${tun_device}"
     printf 'box_user="%s"\n'       "${box_user:-root}"
     printf 'box_group="%s"\n'      "${box_group:-root}"
   } > "${runtime_env}"
@@ -518,29 +327,12 @@ runtime_load() {
 
 
 # ── Apply helpers (per-family) ────────────────────────────────────────────────
-apply_redirect_family() {
-  if start_redirect; then
-    log Info "iptables: ${iptables} REDIRECT rules applied"
-  else
-    log Warning "iptables: ${iptables} REDIRECT had errors (non-fatal, continuing)"
-  fi
-}
-
 apply_tproxy_family() {
   if start_tproxy; then
     log Info "iptables: ${iptables} TPROXY rules applied"
   else
-    log Warning "iptables: ${iptables} TPROXY failed — attempting redirect fallback"
-    network_mode="redirect"
-    apply_redirect_family
-  fi
-}
-
-apply_tun_family() {
-  if start_tun_bypass; then
-    log Info "iptables: ${iptables} TUN rules applied"
-  else
-    log Warning "iptables: ${iptables} TUN rules had errors (non-fatal)"
+    log Error "iptables: ${iptables} TPROXY failed — cannot operate"
+    return 1
   fi
 }
 
@@ -563,45 +355,20 @@ case "${1:-}" in
     settings put global captive_portal_https_url "http://localhost/generate_204" >/dev/null 2>&1 || true
     ndc resolver clearnetdns 2>/dev/null || true
 
-    log Info "iptables: mode=${network_mode} dns=${dns_hijack_mode} quic=${quic} ipv6=${ipv6}"
+    log Info "iptables: mode=tproxy quic=${quic} ipv6=${ipv6}"
 
     # Clean existing rules (errors here are non-fatal — chains may not exist yet)
     iptables="${IPV}"  cleanup_all 2>/dev/null || true
     iptables="${IP6V}" cleanup_all 2>/dev/null || true
 
-    case "${network_mode}" in
-      redirect)
-        iptables="${IPV}" apply_redirect_family
-        if [ "${ipv6}" = "true" ]; then
-          enable_ipv6
-          iptables="${IP6V}" apply_redirect_family
-        else
-          disable_ipv6
-        fi
-        ;;
-      tproxy)
-        iptables="${IPV}" apply_tproxy_family
-        if [ "${ipv6}" = "true" ]; then
-          enable_ipv6
-          iptables="${IP6V}" apply_tproxy_family
-        else
-          disable_ipv6
-        fi
-        ;;
-      tun|tun_udpgw)
-        iptables="${IPV}" apply_tun_family
-        if [ "${ipv6}" = "true" ]; then
-          enable_ipv6
-          iptables="${IP6V}" apply_tun_family
-        else
-          disable_ipv6
-        fi
-        ;;
-      *)
-        log Error "iptables: unknown network_mode '${network_mode}'"
-        exit 1
-        ;;
-    esac
+    # TPROXY only — no redirect/tun fallback
+    iptables="${IPV}" apply_tproxy_family || exit 1
+    if [ "${ipv6}" = "true" ]; then
+      enable_ipv6
+      iptables="${IP6V}" apply_tproxy_family || true
+    else
+      disable_ipv6
+    fi
 
     # DNS-through-tunnel: redirect device UDP:53 to our local forwarder so
     # DNS rides the SSH tunnel (and Android's connectivity check sees the

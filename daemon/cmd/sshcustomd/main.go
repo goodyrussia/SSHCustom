@@ -14,7 +14,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -60,7 +59,7 @@ func setLocalTimezone() {
 // background (which otherwise causes a brief "Stopped" flash on return).
 // Best-effort; errors are ignored.
 func whitelistApp() {
-	const pkg = "com.sshcustom.vpnchain"
+	const pkg = "com.sshcustom.app"
 	cmds := []string{
 		"dumpsys deviceidle whitelist +" + pkg,
 		"cmd appops set " + pkg + " RUN_ANY_IN_BACKGROUND allow",
@@ -160,7 +159,7 @@ func runCmd() {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	cfgPath := fs.String("c", "/data/adb/sshcustom/settings.ini", "path to settings.ini")
 	workDir := fs.String("w", "/data/adb/sshcustom", "work directory")
-	idle := fs.Bool("idle", false, "start in idle mode (WebUI only, no tunnel)")
+	idle := fs.Bool("idle", false, "start in idle mode (no auto-connect)")
 	fs.Parse(os.Args[2:])
 
 	cfg, err := config.Load(*cfgPath)
@@ -204,28 +203,6 @@ func runCmd() {
 		if err := unixSrv.ListenAndServe(ctx); err != nil {
 			log.Printf("[unix-api] %v", err)
 		}
-	}()
-
-	// HTTP API + WebUI — with timeouts
-	mux := buildHTTPMux(atomicCfg, *workDir, *cfgPath, st, &sshClient)
-	httpSrv := &http.Server{
-		Addr:         "127.0.0.1:9190",
-		Handler:      mux,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 60 * time.Second, // SSE streams need a longer write timeout
-		IdleTimeout:  120 * time.Second,
-	}
-	go func() {
-		log.Printf("[http] listening on 127.0.0.1:9190")
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("[http] %v", err)
-		}
-	}()
-	go func() {
-		<-ctx.Done()
-		shutCtx, shutCancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer shutCancel()
-		httpSrv.Shutdown(shutCtx)
 	}()
 
 	// Metrics ticker
@@ -464,17 +441,8 @@ func startListeners(ctx context.Context, cfg *config.Config, curClient func() *i
 				log.Printf("[tproxy] %v", err)
 			}
 		}()
-	default: // redirect
-		trans := &proxy.TransparentServer{
-			Addr:    fmt.Sprintf("0.0.0.0:%d", cfg.RedirPort),
-			Client:  curClient,
-			Timeout: 25 * time.Second,
-		}
-		go func() {
-			if err := trans.ListenAndServe(ctx); err != nil {
-				log.Printf("[transparent] %v", err)
-			}
-		}()
+	default:
+		log.Printf("[startListeners] unknown network_mode=%q — no transparent proxy", cfg.NetworkMode)
 	}
 
 	// DNS forwarder: ssh.iptables redirects device UDP:53 to 127.0.0.1:5353,
@@ -632,120 +600,6 @@ func handleControl(action, workDir string) error {
 		// SIGHUP to self handled in signal loop
 	}
 	return nil
-}
-
-// ── HTTP API ──────────────────────────────────────────────────────────────────
-
-func buildHTTPMux(
-	atomicCfg *config.AtomicConfig,
-	workDir, cfgPath string,
-	st *State,
-	clientPtr *atomic.Pointer[issh.Client],
-) *http.ServeMux {
-	mux := http.NewServeMux()
-
-	env := func(w http.ResponseWriter, ok bool, data interface{}, errMsg string) {
-		w.Header().Set("Content-Type", "application/json")
-		resp := map[string]interface{}{"api_version": "v1", "ok": ok}
-		if ok {
-			resp["data"] = data
-		} else {
-			resp["error"] = errMsg
-		}
-		json.NewEncoder(w).Encode(resp)
-	}
-
-	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
-		env(w, true, map[string]string{"status": "ok", "version": version}, "")
-	})
-
-	mux.HandleFunc("/api/v1/status", func(w http.ResponseWriter, r *http.Request) {
-		cfg := atomicCfg.Get()
-		snap := st.snapshot()
-		env(w, true, map[string]interface{}{
-			"runtime": snap,
-			"config": map[string]interface{}{
-				"network_mode": cfg.NetworkMode,
-				"ssh_mode":     cfg.SSHMode,
-				"socks_port":   cfg.SocksPort,
-				"redir_port":   cfg.RedirPort,
-				"tproxy_port":  cfg.TProxyPort,
-				"quic":         cfg.QUIC,
-				"channel_pool": cfg.ChannelPool,
-			},
-		}, "")
-	})
-
-	mux.HandleFunc("/api/v1/control", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(405)
-			return
-		}
-		var req struct {
-			Action string `json:"action"`
-		}
-		json.NewDecoder(r.Body).Decode(&req)
-		// Schedule 300ms later so HTTP response returns before daemon restarts
-		go func() {
-			time.Sleep(300 * time.Millisecond)
-			handleControl(req.Action, workDir)
-		}()
-		env(w, true, map[string]string{"scheduled": req.Action}, "")
-	})
-
-	mux.HandleFunc("/api/v1/autostart", func(w http.ResponseWriter, r *http.Request) {
-		marker := workDir + "/run/autostart"
-		switch r.Method {
-		case http.MethodGet:
-			_, err := os.Stat(marker)
-			env(w, true, map[string]bool{"enabled": err == nil}, "")
-		case http.MethodPost, http.MethodPut:
-			var req struct {
-				Enabled bool `json:"enabled"`
-			}
-			json.NewDecoder(r.Body).Decode(&req)
-			if req.Enabled {
-				os.WriteFile(marker, []byte("1"), 0644)
-			} else {
-				os.Remove(marker)
-			}
-			env(w, true, map[string]bool{"enabled": req.Enabled}, "")
-		default:
-			w.WriteHeader(405)
-		}
-	})
-
-	// Config read endpoint
-	mux.HandleFunc("/api/v1/config", func(w http.ResponseWriter, r *http.Request) {
-		cfg := atomicCfg.Get()
-		env(w, true, cfg, "")
-	})
-
-	// Public IP as seen through the tunnel (used by the app's WAN card). Served
-	// from the daemon's cache (refreshed on connect) so the app's short HTTP
-	// timeout isn't blocked by a live through-tunnel lookup.
-	mux.HandleFunc("/api/v1/network/public-ip", func(w http.ResponseWriter, r *http.Request) {
-		ip, country := st.wanInfo()
-		if ip == "" {
-			env(w, false, nil, "resolving")
-			return
-		}
-		env(w, true, map[string]interface{}{
-			"tunnel": map[string]string{"ip": ip, "country": country},
-		}, "")
-	})
-
-	// Serve on-disk WebUI at root (no embedded — companion app is the primary UI)
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		webrootIndex := workDir + "/webroot/index.html"
-		if _, err := os.Stat(webrootIndex); err == nil {
-			http.ServeFile(w, r, webrootIndex)
-			return
-		}
-		http.Error(w, "WebUI not installed", 404)
-	})
-
-	return mux
 }
 
 // ── Metrics ───────────────────────────────────────────────────────────────────
@@ -936,7 +790,7 @@ func minDuration(a, b time.Duration) time.Duration {
 // updateModuleProp updates the module.prop description field so KSU/Magisk
 // module managers show the current daemon status (running/reconnecting/stopped).
 func updateModuleProp(status, networkMode string) {
-	const propPath = "/data/adb/modules/sshcustom-vpnchain/module.prop"
+	const propPath = "/data/adb/modules/sshcustom/module.prop"
 	var desc string
 	switch status {
 	case "running":
