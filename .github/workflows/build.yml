@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, no-vpnchain]
     tags: ["v*"]
   pull_request:
     branches: [main]
@@ -12,72 +12,6 @@ env:
   ANDROID_NDK_VERSION: "r26d"
 
 jobs:
-  # ── 1. Build OpenVPN for Android arm64 (VPN Chain) ───────────────────────
-  # continue-on-error: the rest of the release must still ship if this fails;
-  # the VPN Chain feature simply won't have its binary until it builds.
-  build-openvpn:
-    name: Build OpenVPN (arm64-android)
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Android NDK
-        run: |
-          wget -q "https://dl.google.com/android/repository/android-ndk-${{ env.ANDROID_NDK_VERSION }}-linux.zip" -O /tmp/ndk.zip
-          unzip -q /tmp/ndk.zip -d /opt
-          echo "NDK=/opt/android-ndk-${{ env.ANDROID_NDK_VERSION }}" >> "$GITHUB_ENV"
-
-      - name: Build OpenSSL + LZO + OpenVPN (static deps, aarch64-android)
-        run: |
-          set -euo pipefail
-          API=24
-          TC="${NDK}/toolchains/llvm/prebuilt/linux-x86_64"
-          export PATH="${TC}/bin:${PATH}"
-          export CC="aarch64-linux-android${API}-clang"
-          export CXX="aarch64-linux-android${API}-clang++"
-          export AR="llvm-ar" RANLIB="llvm-ranlib" STRIP="llvm-strip"
-          PREFIX=/tmp/deps
-          mkdir -p "${PREFIX}"
-
-          # --- OpenSSL (static) ---
-          curl -sSL https://github.com/openssl/openssl/releases/download/openssl-3.0.16/openssl-3.0.16.tar.gz | tar xz -C /tmp
-          ( cd /tmp/openssl-3.0.16
-            ANDROID_NDK_ROOT="${NDK}" \
-              ./Configure android-arm64 -D__ANDROID_API__=${API} no-shared no-tests no-engine --prefix="${PREFIX}"
-            make -j"$(nproc)" >/dev/null
-            make install_sw >/dev/null )
-
-          # --- LZO (static) ---
-          curl -sSL https://www.oberhumer.com/opensource/lzo/download/lzo-2.10.tar.gz | tar xz -C /tmp
-          ( cd /tmp/lzo-2.10
-            ./configure --host=aarch64-linux-android --prefix="${PREFIX}" --enable-static --disable-shared >/dev/null
-            make -j"$(nproc)" >/dev/null
-            make install >/dev/null )
-
-          # --- OpenVPN (links bionic dynamically, openssl/lzo statically) ---
-          # OpenVPN 2.5.x: libcap-ng/pam/etc. are OPTIONAL (2.6 made libcap-ng
-          # mandatory, which isn't available for Android). 2.5.9 still has
-          # socks-proxy + iproute2 + OpenSSL 3 — all we need.
-          # --enable-iproute2 + IPROUTE so OpenVPN uses Android's `ip` for
-          # interface/route setup instead of the absent ifconfig/route.
-          curl -sSL https://swupdate.openvpn.org/community/releases/openvpn-2.5.9.tar.gz | tar xz -C /tmp
-          ( cd /tmp/openvpn-2.5.9
-            ./configure --host=aarch64-linux-android \
-              --enable-iproute2 IPROUTE=/system/bin/ip \
-              --disable-lz4 --disable-plugins --disable-debug \
-              --disable-management --disable-port-share --disable-unit-tests \
-              OPENSSL_CFLAGS="-I${PREFIX}/include" OPENSSL_LIBS="-L${PREFIX}/lib -lssl -lcrypto" \
-              LZO_CFLAGS="-I${PREFIX}/include" LZO_LIBS="-L${PREFIX}/lib -llzo2" \
-              CFLAGS="-I${PREFIX}/include -O2" LDFLAGS="-L${PREFIX}/lib"
-            make -j"$(nproc)"
-            BIN="$(find src -name openvpn -type f -perm -u+x | head -1)"
-            [ -z "${BIN}" ] && { echo "FATAL: no openvpn binary"; exit 1; }
-            "${STRIP}" "${BIN}" || true
-            file "${BIN}" )
-          mkdir -p "${GITHUB_WORKSPACE}/dist-ovpn"
-          cp "$(find /tmp/openvpn-2.5.9/src -name openvpn -type f -perm -u+x | head -1)" "${GITHUB_WORKSPACE}/dist-ovpn/openvpn"
-          file "${GITHUB_WORKSPACE}/dist-ovpn/openvpn"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -129,7 +63,7 @@ jobs:
   package-module:
     name: Package module ZIP
     runs-on: ubuntu-latest
-    needs: [build-openvpn, build-daemon]
+    needs: [build-daemon]
     steps:
       - uses: actions/checkout@v4
 
@@ -279,30 +213,30 @@ jobs:
             dist/*.zip
             dist/*.apk
           body: |
-            ## SSHCustom-VPNChain ${{ github.ref_name }}
+            ## SSHCustom ${{ github.ref_name }}
+
+            SSH-only routing — VPNChain/OpenVPN removed. Clean SSH tunnel with TPROXY/REDIRECT/TUN modes.
 
             ### Installation
-            1. Flash `SSHCustom-VPNChain-v${{ env.VERSION }}.zip` via Magisk / KernelSU / APatch
+            1. Flash `SSHCustom-v${{ env.VERSION }}-novpnchain.zip` via Magisk / KernelSU / APatch
             2. Reboot
-            3. Install `SSHCustom-VPNChain-release.apk`
-            4. Open app → KernelSU Superuser → grant root → configure SSH → **Start**
+            3. Install `SSHCustom-release.apk`
+            4. Open app → grant root → configure SSH → **Start**
 
-            ### What's fixed in this release
-            - ✅ Profile editor scroll bug (SuperBottomSheet — no more stuck form)
-            - ✅ Collapsing TopAppBar on every screen (miuix MiuixScrollBehavior)
-            - ✅ NavigatorSwitch home icon
-            - ✅ Settings — filled circle selection indicator (visible and clear)
-            - ✅ Release APK with R8 full mode — arm64-only, target **<5 MB**
-            - ✅ Logs — scroll-to-bottom FAB
+            ### This release (no-vpnchain branch)
+            - ✅ All VPNChain/OpenVPN/Windscribe code removed from APK and module
+            - ✅ SSH-only routing: REDIRECT, TPROXY, TUN modes
+            - ✅ SOCKS5 + DNS tunnel + captive portal bypass
+            - ✅ Companion app with SSH profile management
+            - ✅ Static arm64 binary (GOOS=linux, CGO_ENABLED=0)
 
             ### ZIP contents
             | File | Description |
             |---|---|
-            | `bin/sshcustomd` | Go daemon ARM64, static, ~6 MB |
-            | `bin/tun2proxy` | TUN proxy for tun/tun_udpgw modes |
+            | `bin/sshcustomd` | Go daemon arm64, static, ~6 MB |
             | `scripts/ssh.service` | Lifecycle: start/stop/restart |
-            | `scripts/ssh.iptables` | 4 modes + capability probe |
-            | `scripts/ssh.tool` | BBR, TCP buffers, cgroup |
+            | `scripts/ssh.iptables` | 3 modes + capability probe |
+            | `scripts/ssh.tool` | BBR, TCP buffers, speed_boost |
             | `settings.ini` | Edit SSH credentials here |
 
             ### Requirements
