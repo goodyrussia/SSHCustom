@@ -6,11 +6,13 @@ import (
 	"os"
 )
 
+var Version = "5.0.0"
+
 func StartUnixServer(sockPath string) {
 	os.Remove(sockPath)
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
-		log.Printf("[unix] listen error: %v", err)
+		log.Printf("[unix] error: %v", err)
 		return
 	}
 	defer ln.Close()
@@ -36,8 +38,8 @@ func handleConnection(conn net.Conn) {
 		conn.Write([]byte("pong"))
 	case "status":
 		conn.Write([]byte("running"))
-	case "stop":
-		conn.Write([]byte("stopping"))
+	case "version":
+		conn.Write([]byte(Version))
 	default:
 		conn.Write([]byte("ok"))
 	}
