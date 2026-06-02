@@ -1,0 +1,1 @@
+v5.0.0 full autonomous rewrite in progress - TPROXY + payload engine + no-internet fixes active
