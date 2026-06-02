@@ -2,20 +2,30 @@ package ssh
 
 import "strings"
 
-// InjectPayload applies HTTP Injector style payload to the request
-func InjectPayload(host, payload string, mode string) string {
-	if payload == "" {
+// Payload modes (HTTP Injector style)
+const (
+	ModeFront  = "front"
+	ModeBack   = "back"
+	ModeQuery  = "query"
+	ModeDual   = "dual"
+	ModeSplit  = "split"
+)
+
+// Inject applies payload based on mode
+func Inject(host, payload, mode string) string {
+	if payload == "" || mode == "" {
 		return host
 	}
 	switch mode {
-	case "front", "query":
+	case ModeFront, ModeQuery:
 		return payload + host
-	case "back":
+	case ModeBack:
 		return host + payload
-	case "split":
-		parts := strings.Split(host, ".")
-		if len(parts) > 1 {
-			return parts[0] + payload + "." + strings.Join(parts[1:], ".")
+	case ModeDual:
+		return payload + host + payload
+	case ModeSplit:
+		if idx := strings.Index(host, "."); idx > 0 {
+			return host[:idx] + payload + host[idx:]
 		}
 		return host + payload
 	default:
