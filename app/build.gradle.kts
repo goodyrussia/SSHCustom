@@ -121,3 +121,19 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
+
+android {
+    signingConfigs {
+        create("release") {
+            storeFile = file("/tmp/release.jks")
+            storePassword = "sshcustom"
+            keyAlias = "release"
+            keyPassword = "sshcustom"
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+}
