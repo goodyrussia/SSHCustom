@@ -10,31 +10,34 @@ func StartUnixServer(sockPath string) {
 	os.Remove(sockPath)
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
-		log.Printf("[unix] error: %v", err)
+		log.Printf("[unix] listen error: %v", err)
 		return
 	}
 	defer ln.Close()
-	log.Printf("[unix] ready at %s", sockPath)
+	log.Printf("[unix] listening on %s", sockPath)
 
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			continue
 		}
-		go handleConn(conn)
+		go handleConnection(conn)
 	}
 }
 
-func handleConn(conn net.Conn) {
+func handleConnection(conn net.Conn) {
 	defer conn.Close()
-	buf := make([]byte, 256)
+	buf := make([]byte, 512)
 	n, _ := conn.Read(buf)
 	cmd := string(buf[:n])
+
 	switch cmd {
 	case "ping":
 		conn.Write([]byte("pong"))
 	case "status":
 		conn.Write([]byte("running"))
+	case "stop":
+		conn.Write([]byte("stopping"))
 	default:
 		conn.Write([]byte("ok"))
 	}
