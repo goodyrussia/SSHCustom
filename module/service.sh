@@ -3,7 +3,7 @@
 # Waits for Android boot (max 5 min), then starts daemon in idle mode.
 # If autostart marker exists, waits for connectivity then starts the tunnel.
 
-MODDIR="${0%/*}"
+MODDIR="$(cd "$(dirname "$0")" && pwd)"
 WORK_DIR="/data/adb/sshcustom"
 RUN_DIR="${WORK_DIR}/run"
 SERVICE="${WORK_DIR}/scripts/ssh.service"
