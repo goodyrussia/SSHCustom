@@ -22,6 +22,9 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Build daemon (arm64)
         run: |
           cd daemon
@@ -47,12 +50,16 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleRelease
 
+      - name: Copy APK for release
+        run: |
+          find app/build/outputs/apk/release -name '*.apk' -exec cp {} dist/ \;
+
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/SSHCustom-v*.zip
-            app/build/outputs/apk/release/app-release.apk
+            dist/*.apk
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
