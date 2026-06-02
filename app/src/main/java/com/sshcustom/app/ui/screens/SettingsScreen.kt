@@ -248,9 +248,9 @@ fun SettingsScreen(
                     Card(Modifier.fillMaxWidth()) {
                         BasicComponent(
                             title        = "Developer",
-                            onClick      = { openUrl("https://github.com/GoodyOG") },
+                            onClick      = { openUrl("https://github.com/Goodyrussia") },
                             rightActions = {
-                                Text("GoodyOG",
+                                Text("Goodyrussia",
                                     color    = MiuixTheme.colorScheme.onSurfaceVariantActions,
                                     fontSize = MiuixTheme.textStyles.body2.fontSize)
                             },

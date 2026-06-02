@@ -205,6 +205,10 @@ func runCmd() {
 		}
 	}()
 
+	// Mini HTTP API for APK status/WAN-IP polling (APK uses OkHttp on :9190).
+	miniHTTP := api.StartMiniHTTP("127.0.0.1:9190", st.snapshot, st.wanInfo)
+	defer miniHTTP.Close()
+
 	// Metrics ticker
 	go metricsLoop(ctx, st, &sshClient)
 
