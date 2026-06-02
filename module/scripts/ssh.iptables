@@ -1,43 +1,42 @@
 #!/system/bin/sh
-# ssh.iptables v5.0.0 - TPROXY only (no REDIRECT, no TUN)
-# Fixes no-internet on zero-bug hosts
-
-MODDIR="$(cd "$(dirname "$0")" && pwd)"
-WORK_DIR="/data/adb/sshcustom"
+# ssh.iptables v5.0.0 - TPROXY only (zero-bug host safe)
+# No REDIRECT, no TUN, no leaks
 
 TPORT=1081
-SPORT=1080
 
-start_tproxy() {
-    iptables -t mangle -N SSHC_TP_EXT 2>/dev/null || true
-    iptables -t mangle -N SSHC_TP_LOC 2>/dev/null || true
+start() {
+    iptables -t mangle -N SSHC_TP 2>/dev/null || true
+    iptables -t mangle -F SSHC_TP
 
-    # Bypass loopback and local
-    iptables -t mangle -A SSHC_TP_LOC -j RETURN -m mark --mark 0x8000
-    iptables -t mangle -A SSHC_TP_LOC -d 127.0.0.0/8 -j RETURN
-    iptables -t mangle -A SSHC_TP_LOC -d 192.168.0.0/16 -j RETURN
-    iptables -t mangle -A SSHC_TP_LOC -d 10.0.0.0/8 -j RETURN
-    iptables -t mangle -A SSHC_TP_LOC -d 172.16.0.0/12 -j RETURN
+    # Bypass common local networks
+    iptables -t mangle -A SSHC_TP -d 127.0.0.0/8 -j RETURN
+    iptables -t mangle -A SSHC_TP -d 192.168.0.0/16 -j RETURN
+    iptables -t mangle -A SSHC_TP -d 10.0.0.0/8 -j RETURN
+    iptables -t mangle -A SSHC_TP -d 172.16.0.0/12 -j RETURN
 
-    # TPROXY rule
-    iptables -t mangle -A SSHC_TP_LOC -p tcp -j TPROXY --on-port $TPORT --tproxy-mark 0x8000
-    iptables -t mangle -A SSHC_TP_LOC -p udp -j TPROXY --on-port $TPORT --tproxy-mark 0x8000
+    # TPROXY for TCP + UDP
+    iptables -t mangle -A SSHC_TP -p tcp -j TPROXY --on-port $TPORT --tproxy-mark 0x8000
+    iptables -t mangle -A SSHC_TP -p udp -j TPROXY --on-port $TPORT --tproxy-mark 0x8000
 
-    iptables -t mangle -A PREROUTING -j SSHC_TP_LOC
+    iptables -t mangle -A PREROUTING -j SSHC_TP
+
     ip rule add fwmark 0x8000 table 100 2>/dev/null || true
     ip route add local default dev lo table 100 2>/dev/null || true
+
+    echo "[iptables] TPROXY enabled"
 }
 
-stop_tproxy() {
-    iptables -t mangle -D PREROUTING -j SSHC_TP_LOC 2>/dev/null || true
-    iptables -t mangle -F SSHC_TP_LOC 2>/dev/null || true
-    iptables -t mangle -X SSHC_TP_LOC 2>/dev/null || true
+stop() {
+    iptables -t mangle -D PREROUTING -j SSHC_TP 2>/dev/null || true
+    iptables -t mangle -F SSHC_TP 2>/dev/null || true
+    iptables -t mangle -X SSHC_TP 2>/dev/null || true
     ip rule del fwmark 0x8000 table 100 2>/dev/null || true
     ip route del local default dev lo table 100 2>/dev/null || true
+    echo "[iptables] TPROXY disabled"
 }
 
 case "$1" in
-    enable)  start_tproxy ;;
-    disable) stop_tproxy ;;
+    enable|start) start ;;
+    disable|stop) stop ;;
     *) echo "usage: $0 enable|disable" ;;
 esac
